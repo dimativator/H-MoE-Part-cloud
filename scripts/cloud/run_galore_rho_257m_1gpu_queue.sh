@@ -10,6 +10,7 @@ DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-pack
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/galore-rho-257m-1xc-20260912}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LATEST_CKPT_INTERVAL=${LATEST_CKPT_INTERVAL:-5000}
+SAVE_CHECKPOINTS=${SAVE_CHECKPOINTS:-1}
 RUN_SEED=${SEED:-0}
 
 case "${RESULTS_DIR}" in
@@ -27,6 +28,10 @@ esac
 case "${MODE}" in
     smoke|full) ;;
     *) echo "MODE must be smoke or full" >&2; exit 2 ;;
+esac
+case "${SAVE_CHECKPOINTS}" in
+    0|1) ;;
+    *) echo "SAVE_CHECKPOINTS must be 0 or 1" >&2; exit 2 ;;
 esac
 
 mkdir -p "${RESULTS_DIR}/logs" "${EVAL_CACHE_DIR}"
@@ -105,6 +110,8 @@ run_rho() {
         log_interval=1
         save_args=(--no-local-save)
         eval_args=()
+    elif [[ "${SAVE_CHECKPOINTS}" == "0" ]]; then
+        save_args=(--no-local-save)
     fi
 
     echo "RUN_START queue=${QUEUE_ID} rho=${rho} experiment=${experiment}"
@@ -130,7 +137,7 @@ run_rho() {
         --wandb-group "${group}" \
         --metrics-jsonl "${exp_dir}/metrics.jsonl"
 
-    if [[ "${MODE}" == "full" ]]; then
+    if [[ "${MODE}" == "full" && "${SAVE_CHECKPOINTS}" == "1" ]]; then
         remove_checkpoint_tree "${exp_dir}/ckpts"
     fi
     touch "${marker}"
