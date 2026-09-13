@@ -341,6 +341,62 @@ class PackedFineWebMultiGpuParityTest(unittest.TestCase):
             torch.tensor([[119, 120, 121], [122, 123, 124]]),
         )
 
+    def test_segmented_snapshot_crosses_the_one_x_c_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_snapshot(root)
+            metadata_path = root / "packed_metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["format"] = "packed_fineweb_h200_v2"
+            for rank_metadata in metadata["ranks"]:
+                rank = int(rank_metadata["rank"])
+                first = dict(rank_metadata)
+                continuation_blocks = np.asarray(
+                    [
+                        [1001 + rank * 100, 1002 + rank * 100, 1003 + rank * 100],
+                        [1004 + rank * 100, 1005 + rank * 100, 1006 + rank * 100],
+                        [1007 + rank * 100, 1008 + rank * 100, 1009 + rank * 100],
+                        [1010 + rank * 100, 1011 + rank * 100, 1012 + rank * 100],
+                    ],
+                    dtype="<u2",
+                )
+                continuation_path = root / f"rank{rank}.continuation.uint16"
+                payload = continuation_blocks.tobytes()
+                continuation_path.write_bytes(payload)
+                continuation = {
+                    "file": continuation_path.name,
+                    "blocks": len(continuation_blocks),
+                    "bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+                rank_metadata["segments"] = [first, continuation]
+                rank_metadata["blocks"] = first["blocks"] + continuation["blocks"]
+                rank_metadata["bytes"] = first["bytes"] + continuation["bytes"]
+                rank_metadata.pop("file")
+                rank_metadata.pop("sha256")
+            metadata_path.write_text(json.dumps(metadata))
+
+            readers = [self._reader(root, rank=rank, world_size=2) for rank in range(2)]
+            for reader in readers:
+                reader.set_step(2)
+            boundary_batch = torch.cat([self._blocks(reader) for reader in readers])
+
+        torch.testing.assert_close(
+            boundary_batch,
+            torch.tensor(
+                [
+                    [1001, 1002, 1003],
+                    [1004, 1005, 1006],
+                    [1007, 1008, 1009],
+                    [1010, 1011, 1012],
+                    [1101, 1102, 1103],
+                    [1104, 1105, 1106],
+                    [1107, 1108, 1109],
+                    [1110, 1111, 1112],
+                ]
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
