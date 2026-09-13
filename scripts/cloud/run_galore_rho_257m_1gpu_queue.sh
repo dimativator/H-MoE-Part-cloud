@@ -7,13 +7,14 @@ set -euo pipefail
 QUEUE_ID=${QUEUE_ID:-A}
 MODE=${MODE:-full}
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
-RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/galore-rho-257m-1xc-20260912}
+RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-20260912}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LATEST_CKPT_INTERVAL=${LATEST_CKPT_INTERVAL:-5000}
 SAVE_CHECKPOINTS=${SAVE_CHECKPOINTS:-1}
 RUN_SEED=${SEED:-0}
 
 case "${RESULTS_DIR}" in
+    /workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-*|\
     /workspace-SR006.nfs3/dimativator/galore-rho-257m-1xc-*) ;;
     *)
         echo "Refusing checkpoint cleanup outside the dedicated experiment root: ${RESULTS_DIR}" >&2
