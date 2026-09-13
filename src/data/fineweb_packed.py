@@ -17,7 +17,7 @@ from .fineweb_replay import (
 )
 
 
-EXPECTED_FORMAT = "packed_fineweb_h200_v1"
+EXPECTED_FORMATS = {"packed_fineweb_h200_v1", "packed_fineweb_h200_v2"}
 EXPECTED_MANIFEST_FINGERPRINT = (
     "7327154b810ec27cf5ca794aedcc3aea11796b218261ff24b5e2d3d2d283e00b"
 )
@@ -35,6 +35,58 @@ def _sha256_file(path: Path) -> str:
         while chunk := source.read(16 * 1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _open_rank_segments(
+    root: Path,
+    rank_metadata: dict[str, Any],
+    *,
+    block_tokens: int,
+    rank: int,
+) -> tuple[list[tuple[int, int, np.memmap]], int]:
+    segment_metadata = rank_metadata.get("segments", [rank_metadata])
+    segments: list[tuple[int, int, np.memmap]] = []
+    offset = 0
+    total_bytes = 0
+    for segment in segment_metadata:
+        path = root / str(segment["file"])
+        blocks = int(segment["blocks"])
+        expected_bytes = int(segment["bytes"])
+        if expected_bytes != blocks * block_tokens * 2:
+            raise ValueError(f"Packed FineWeb byte count mismatch for rank {rank}")
+        if path.stat().st_size != expected_bytes:
+            raise ValueError(f"Packed FineWeb size mismatch for rank {rank}")
+        if _sha256_file(path) != str(segment["sha256"]):
+            raise ValueError(f"Packed FineWeb SHA-256 mismatch for rank {rank}")
+        tokens = np.memmap(
+            path,
+            mode="r",
+            dtype="<u2",
+            shape=(blocks, block_tokens),
+        )
+        segments.append((offset, offset + blocks, tokens))
+        offset += blocks
+        total_bytes += expected_bytes
+    if offset != int(rank_metadata["blocks"]):
+        raise ValueError(f"Packed FineWeb block count mismatch for rank {rank}")
+    if total_bytes != int(rank_metadata["bytes"]):
+        raise ValueError(f"Packed FineWeb total byte count mismatch for rank {rank}")
+    return segments, offset
+
+
+def _read_rank_blocks(
+    segments: list[tuple[int, int, np.memmap]], start: int, end: int
+) -> np.ndarray:
+    chunks = [
+        tokens[max(start, segment_start) - segment_start : min(end, segment_end) - segment_start]
+        for segment_start, segment_end, tokens in segments
+        if start < segment_end and end > segment_start
+    ]
+    if not chunks or sum(len(chunk) for chunk in chunks) != end - start:
+        raise RuntimeError("Packed FineWeb segment coverage is incomplete")
+    if len(chunks) == 1:
+        return chunks[0]
+    return np.concatenate(chunks, axis=0)
 
 
 class PackedFineWebTrainReader:
@@ -60,26 +112,17 @@ class PackedFineWebTrainReader:
         rank_metadata = metadata["ranks"][rank]
         if int(rank_metadata["rank"]) != rank:
             raise ValueError("Packed FineWeb rank metadata is out of order")
-        self.path = root / str(rank_metadata["file"])
-        expected_bytes = int(rank_metadata["bytes"])
-        if self.path.stat().st_size != expected_bytes:
-            raise ValueError(f"Packed FineWeb size mismatch for rank {rank}")
-        actual_sha256 = _sha256_file(self.path)
-        if actual_sha256 != str(rank_metadata["sha256"]):
-            raise ValueError(f"Packed FineWeb SHA-256 mismatch for rank {rank}")
-
         self.rank = rank
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.block_tokens = sequence_length + 1
-        self.blocks = int(rank_metadata["blocks"])
-        self._num_steps = self.blocks // batch_size
-        self._tokens = np.memmap(
-            self.path,
-            mode="r",
-            dtype="<u2",
-            shape=(self.blocks, self.block_tokens),
+        self._segments, self.blocks = _open_rank_segments(
+            root,
+            rank_metadata,
+            block_tokens=self.block_tokens,
+            rank=rank,
         )
+        self._num_steps = self.blocks // batch_size
         self.step = 0
 
     def set_step(self, step: int) -> None:
@@ -93,7 +136,11 @@ class PackedFineWebTrainReader:
         start = self.step * self.batch_size
         end = start + self.batch_size
         batch = torch.from_numpy(
-            np.array(self._tokens[start:end], dtype=np.int64, copy=True)
+            np.array(
+                _read_rank_blocks(self._segments, start, end),
+                dtype=np.int64,
+                copy=True,
+            )
         )
         self.step += 1
         return batch[:, :-1], batch[:, 1:]
@@ -162,14 +209,6 @@ class PackedFineWebShardedTrainReader:
         rank_metadata = metadata["ranks"][source_rank]
         if int(rank_metadata["rank"]) != source_rank:
             raise ValueError("Packed FineWeb rank metadata is out of order")
-        self.path = root / str(rank_metadata["file"])
-        expected_bytes = int(rank_metadata["bytes"])
-        if self.path.stat().st_size != expected_bytes:
-            raise ValueError(f"Packed FineWeb size mismatch for rank {source_rank}")
-        actual_sha256 = _sha256_file(self.path)
-        if actual_sha256 != str(rank_metadata["sha256"]):
-            raise ValueError(f"Packed FineWeb SHA-256 mismatch for rank {source_rank}")
-
         self.rank = rank
         self.source_rank = source_rank
         self.shard_rank = shard_rank
@@ -178,14 +217,13 @@ class PackedFineWebShardedTrainReader:
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.block_tokens = sequence_length + 1
-        self.blocks = int(rank_metadata["blocks"])
-        self._num_steps = self.blocks // source_batch_size
-        self._tokens = np.memmap(
-            self.path,
-            mode="r",
-            dtype="<u2",
-            shape=(self.blocks, self.block_tokens),
+        self._segments, self.blocks = _open_rank_segments(
+            root,
+            rank_metadata,
+            block_tokens=self.block_tokens,
+            rank=source_rank,
         )
+        self._num_steps = self.blocks // source_batch_size
         self.step = 0
 
     def set_step(self, step: int) -> None:
@@ -202,7 +240,11 @@ class PackedFineWebShardedTrainReader:
         )
         end = start + self.batch_size
         batch = torch.from_numpy(
-            np.array(self._tokens[start:end], dtype=np.int64, copy=True)
+            np.array(
+                _read_rank_blocks(self._segments, start, end),
+                dtype=np.int64,
+                copy=True,
+            )
         )
         self.step += 1
         return batch[:, :-1], batch[:, 1:]
@@ -237,7 +279,7 @@ class PackedFineWebShardedTrainReader:
 def build_packed_fineweb_readers(args, *, rank: int, world_size: int):
     root = Path(args.datasets_dir).expanduser()
     metadata = json.loads((root / "packed_metadata.json").read_text())
-    if metadata.get("format") != EXPECTED_FORMAT:
+    if metadata.get("format") not in EXPECTED_FORMATS:
         raise ValueError("Unsupported packed FineWeb format")
     if metadata.get("manifest_fingerprint") != EXPECTED_MANIFEST_FINGERPRINT:
         raise ValueError("Packed FineWeb manifest fingerprint does not match H200")
