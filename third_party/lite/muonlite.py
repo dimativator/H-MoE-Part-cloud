@@ -489,14 +489,33 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
                     )
                 )
                 momentum = momentum * muon_theta + local_g * (1 - muon_theta)
-                local_M = momentum + local_g * (1 - muon_theta) / muon_theta
-                if self._state_comm.enabled:
+                reuse_quantized_state = (
+                    self.qargs is not None
+                    and self._state_comm.reuses_quantized_state_on_wire
+                )
+                if reuse_quantized_state:
+                    quantize_fp8_state_(
+                        state,
+                        "momentum",
+                        momentum,
+                        self.qargs,
+                        signed=True,
+                    )
+                    M = self._state_comm.gather_quantized_state_rows(
+                        state,
+                        "momentum",
+                        original_rows=local.original_rows,
+                        gradient=g,
+                        gradient_alpha=(1 - muon_theta) / muon_theta,
+                    )
+                elif self._state_comm.enabled:
+                    local_M = momentum + local_g * (1 - muon_theta) / muon_theta
                     M = self._state_comm.gather_rows(
                         RowShard(local_M, local.original_rows),
                         state_derived=True,
                     )
                 else:
-                    M = local_M
+                    M = momentum + local_g * (1 - muon_theta) / muon_theta
                 with self._state_comm.phase("orthogonalize", M):
                     u = zeropower_via_newtonschulz5(M, ns_steps)
 
@@ -508,7 +527,7 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
                 p.data.add_(u, alpha=-0.2 * lr * math.sqrt(max(m, n)))
                 if self.qargs is None:
                     state["momentum"] = momentum
-                else:
+                elif not reuse_quantized_state:
                     quantize_fp8_state_(
                         state,
                         "momentum",
