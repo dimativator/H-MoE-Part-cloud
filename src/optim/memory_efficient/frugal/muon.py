@@ -217,7 +217,8 @@ class MuonBase(FP8StateDictMixin, Optimizer):
             )
 
         reuse_quantized_state = (
-            self.qargs is not None
+            grad.ndim >= 2
+            and self.qargs is not None
             and self._state_comm.reuses_quantized_state_on_wire
         )
         if reuse_quantized_state:

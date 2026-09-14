@@ -2,12 +2,15 @@ import unittest
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from unittest.mock import PropertyMock, patch
 
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from optim.memory_efficient.frugal import FP8CoordMuon
+from optim.distributed_state_comm import DistributedStateCommunicator
+from optim.memory_efficient.frugal.muon import MuonBase
 from optim.multi_optimizer import MultiOptimizer
 from optim.optimization import get_optimizer
 
@@ -74,6 +77,26 @@ class FP8CoordMuonTest(unittest.TestCase):
         self.assertIsInstance(optimizer.non_proj_opt, torch.optim.AdamW)
         self.assertIs(optimizer.proj_opt.param_groups[0]["params"][0], matrix)
         self.assertIs(optimizer.non_proj_opt.param_groups[0]["params"][0], embedding)
+
+    def test_one_dimensional_muon_state_does_not_enter_matrix_wire_reuse(self):
+        parameter = torch.nn.Parameter(torch.randn(8))
+        optimizer = MuonBase(
+            [parameter],
+            qargs=qargs(),
+            distributed_state_sharding=True,
+            state_wire_dtype="fp8",
+        )
+        parameter.grad = torch.randn_like(parameter)
+
+        with patch.object(
+            DistributedStateCommunicator,
+            "reuses_quantized_state_on_wire",
+            new_callable=PropertyMock,
+            return_value=True,
+        ):
+            optimizer.step()
+
+        self.assertTrue(torch.isfinite(parameter).all())
 
 
 if __name__ == "__main__":
