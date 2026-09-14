@@ -7,7 +7,7 @@ set -euo pipefail
 QUEUE_ID=${QUEUE_ID:-A}
 MODE=${MODE:-full}
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
-RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-20260912}
+RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-wsd-20260914}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LATEST_CKPT_INTERVAL=${LATEST_CKPT_INTERVAL:-5000}
 SAVE_CHECKPOINTS=${SAVE_CHECKPOINTS:-1}
@@ -83,14 +83,14 @@ remove_checkpoint_tree() {
 run_rho() {
     local rho=$1
     local suffix=${rho/./p}
-    local experiment="llama257M_galore_rho${suffix}_bf16_lr1e-3_wd0p1_1xC_1gpu"
-    local group="1xChinchilla_257M_galore_rho_cloud"
+    local experiment="llama257M_galore_rho${suffix}_bf16_wsd_lr1e-3_wd0p1_1xC_1gpu"
+    local group="1xChinchilla_257M_galore_rho_wsd_cloud"
     local exp_dir="${RESULTS_DIR}/${group}/${experiment}"
     local marker="${RESULTS_DIR}/.${experiment}.${MODE}.done"
     [[ -f "${marker}" ]] && return
 
     local iterations=39250
-    local warmup=3925
+    local warmup=2000
     local eval_interval=500
     local eval_batches=32
     local log_interval=50
@@ -129,7 +129,8 @@ run_rho() {
         --opt galore_adamw --non_proj_opt adamw \
         --lr 1e-3 --weight-decay 0.1 --beta1 0.9 --beta2 0.999 \
         --grad-clip 1.0 --density "${rho}" --update_gap 50 \
-        --scheduler cos --warmup-steps "${warmup}" --iterations "${iterations}" \
+        --scheduler wsd --warmup-steps "${warmup}" --iterations "${iterations}" \
+        --wsd-fract-decay 0.1 --wsd-final-lr-scale 0 --decay-type cosine \
         --batch-size 32 --acc-steps 4 \
         --eval-interval "${eval_interval}" --eval-batches "${eval_batches}" \
         --log-interval "${log_interval}" \

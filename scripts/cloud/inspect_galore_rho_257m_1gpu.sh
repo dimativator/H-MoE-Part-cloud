@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-20260912}
+RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-wsd-20260914}
 echo "INSPECT_ROOT=${RESULTS_DIR}"
 
 if [[ ! -d "${RESULTS_DIR}" ]]; then
