@@ -8,7 +8,9 @@ from optim.fp8_state import (
     dequantize_fp8_state,
     init_fp8_state,
     quantize_fp8_state_,
+    use_expansion_mode,
 )
+from optim.fp8_momentum_update import update_fp8_momentum_
 from optim.distributed_state_comm import DistributedStateCommunicator, RowShard
 
 
@@ -204,6 +206,7 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
         distributed_state_sharding: bool = False,
         state_wire_dtype: str = "auto",
         profile_communication: bool = False,
+        fused_vanilla_adamw: bool = False,
     ):
         defaults = dict(
             lr=lr,
@@ -230,6 +233,7 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
         self.adamw_b2 = adamw_betas[1]
         self.smooth_ratio = 0.1
         self.qargs = qargs
+        self.fused_vanilla_adamw = fused_vanilla_adamw
         self._state_comm = DistributedStateCommunicator(
             enabled=distributed_state_sharding,
             wire_dtype=state_wire_dtype,
@@ -478,29 +482,20 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
                         "resharding checkpoints is not implemented."
                     )
 
-                momentum = (
-                    state["momentum"]
-                    if self.qargs is None
-                    else dequantize_fp8_state(
-                        state,
-                        "momentum",
-                        self.qargs,
-                        signed=True,
-                    )
-                )
-                momentum = momentum * muon_theta + local_g * (1 - muon_theta)
                 reuse_quantized_state = (
                     self.qargs is not None
                     and self._state_comm.reuses_quantized_state_on_wire
                 )
                 if reuse_quantized_state:
-                    quantize_fp8_state_(
-                        state,
-                        "momentum",
-                        momentum,
-                        self.qargs,
-                        signed=True,
-                    )
+                    with self._state_comm.phase("persistent_update", local_g):
+                        update_fp8_momentum_(
+                            state,
+                            "momentum",
+                            local_g,
+                            self.qargs,
+                            momentum=muon_theta,
+                            gradient_alpha=1 - muon_theta,
+                        )
                     M = self._state_comm.gather_quantized_state_rows(
                         state,
                         "momentum",
@@ -508,13 +503,27 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
                         gradient=g,
                         gradient_alpha=(1 - muon_theta) / muon_theta,
                     )
-                elif self._state_comm.enabled:
+                    momentum = None
+                else:
+                    momentum = (
+                        state["momentum"]
+                        if self.qargs is None
+                        else dequantize_fp8_state(
+                            state,
+                            "momentum",
+                            self.qargs,
+                            signed=True,
+                        )
+                    )
+                    momentum = momentum * muon_theta + local_g * (1 - muon_theta)
+
+                if not reuse_quantized_state and self._state_comm.enabled:
                     local_M = momentum + local_g * (1 - muon_theta) / muon_theta
                     M = self._state_comm.gather_rows(
                         RowShard(local_M, local.original_rows),
                         state_derived=True,
                     )
-                else:
+                elif not reuse_quantized_state:
                     M = momentum + local_g * (1 - muon_theta) / muon_theta
                 with self._state_comm.phase("orthogonalize", M):
                     u = zeropower_via_newtonschulz5(M, ns_steps)
@@ -523,8 +532,9 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
                     logger.info(f"{state['name']}, vanilla_muon")
 
                 state["step"] += 1
-                p.data.mul_(1 - lr * wd)
-                p.data.add_(u, alpha=-0.2 * lr * math.sqrt(max(m, n)))
+                with self._state_comm.phase("parameter_update", p):
+                    p.data.mul_(1 - lr * wd)
+                    p.data.add_(u, alpha=-0.2 * lr * math.sqrt(max(m, n)))
                 if self.qargs is None:
                     state["momentum"] = momentum
                 elif not reuse_quantized_state:
@@ -565,6 +575,61 @@ class MuonLite(FP8StateDictMixin, torch.optim.Optimizer):
                         f"{state['name']}, adamw, subspace={state['subspace_ratio']}, "
                         f"lr_ratio={state['lr_ratio']}"
                     )
+
+                fused_adamw = (
+                    self.fused_vanilla_adamw
+                    and self.qargs is not None
+                    and p.is_cuda
+                    and self.qargs.qgroup_size == 128
+                    and use_expansion_mode(self.qargs.first_order_expansion)
+                    == use_expansion_mode(self.qargs.second_order_expansion)
+                )
+                if fused_adamw:
+                    from third_party.coat.optimizer.triton_kernels import (
+                        triton_fp8_adamw_expand_step,
+                        triton_fp8_adamw_step,
+                    )
+
+                    next_step = state["step"] + 1
+                    bias_correction1 = 1 - adam_theta**next_step
+                    bias_correction2_sqrt = (1 - adam_b2**next_step) ** 0.5
+                    kernel_kwargs = dict(
+                        beta1=adam_theta,
+                        beta2=adam_b2,
+                        step_size=lr / bias_correction1,
+                        bias_correction2_sqrt=bias_correction2_sqrt,
+                        eps=eps / bias_correction2_sqrt,
+                        wd_lr=lr * wd,
+                        qgroup_size=self.qargs.qgroup_size,
+                    )
+                    with self._state_comm.phase("adamw_fused", p):
+                        if use_expansion_mode(self.qargs.first_order_expansion):
+                            triton_fp8_adamw_expand_step(
+                                p,
+                                g,
+                                state["moment1"],
+                                state["scale_moment1"],
+                                state["expand_moment1"],
+                                state["sqrt_minmax_moment1"],
+                                state["moment2"],
+                                state["scale_moment2"],
+                                state["expand_moment2"],
+                                state["sqrt_minmax_moment2"],
+                                expand_min=self.qargs.expand_min,
+                                **kernel_kwargs,
+                            )
+                        else:
+                            triton_fp8_adamw_step(
+                                p,
+                                g,
+                                state["moment1"],
+                                state["scale_moment1"],
+                                state["moment2"],
+                                state["scale_moment2"],
+                                **kernel_kwargs,
+                            )
+                    state["step"] = next_step
+                    continue
 
                 if self.qargs is None:
                     moment1 = state["moment1"]

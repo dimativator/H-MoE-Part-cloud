@@ -479,6 +479,7 @@ def main(args):
             distributed_state_sharding=args.optimizer_state_sharding,
             state_wire_dtype=args.optimizer_state_wire_dtype,
             profile_communication=args.optimizer_comm_profile,
+            fused_vanilla_adamw=args.opt == "muon",
             **lite_kwargs,
         )
     elif args.opt in ("loro", "loro_adpt"):

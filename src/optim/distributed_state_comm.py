@@ -108,6 +108,11 @@ class DistributedStateCommunicator:
             "optimizer_state_comm_ms": 0.0,
             "optimizer_state_encode_ms": 0.0,
             "optimizer_state_decode_ms": 0.0,
+            "optimizer_state_persistent_update_ms": 0.0,
+            "optimizer_state_parameter_update_ms": 0.0,
+            "optimizer_state_adamw_fused_ms": 0.0,
+            "optimizer_state_non_proj_optimizer_ms": 0.0,
+            "optimizer_state_projection_ms": 0.0,
             "optimizer_state_payload_bytes": 0.0,
             "optimizer_state_wire_bytes": 0.0,
             "optimizer_state_rx_bytes": 0.0,
@@ -154,6 +159,7 @@ class DistributedStateCommunicator:
                 self._step_profile[key] = (
                     self._step_profile.get(key, 0.0) + start.elapsed_time(end)
                 )
+            self._pending_cuda_events = []
         self._last_profile = dict(self._step_profile)
 
     def get_last_profile(self) -> Dict[str, float]:

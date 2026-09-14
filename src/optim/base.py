@@ -860,6 +860,11 @@ def train(
                     "optimizer_state_encode_ms_mean",
                     "optimizer_state_decode_ms_mean",
                     "optimizer_state_orthogonalize_ms_mean",
+                    "optimizer_state_persistent_update_ms_mean",
+                    "optimizer_state_parameter_update_ms_mean",
+                    "optimizer_state_adamw_fused_ms_mean",
+                    "optimizer_state_non_proj_optimizer_ms_mean",
+                    "optimizer_state_projection_ms_mean",
                 )
             )
             result["optimizer_other_ms_mean"] = max(

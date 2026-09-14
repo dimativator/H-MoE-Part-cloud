@@ -8,6 +8,7 @@ from .galore_projector import GaLoreProjector
 from .coordinate_projector import CoordinateProjector
 
 import warnings
+from contextlib import nullcontext
 
 def prepare_for_majority_vote_signsgd(ddp_model):
     vocab_size = None
@@ -184,14 +185,27 @@ class ProjOptimizer(Optimizer):
                 if len(state) == 0:
                     self._init_state(example=p, state=state)
 
-                p.mul_(1 - group["lr"] * group["weight_decay"])
+                state_comm = getattr(self, "_state_comm", None)
+                parameter_phase = (
+                    state_comm.phase("parameter_update", p)
+                    if state_comm is not None
+                    else nullcontext()
+                )
+                with parameter_phase:
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
 
                 if not self.is_proj_group(group):
                     update = self._compute_update(grad, state, **group)
                 else:
                     update = self._proj_params_update(grad, state, group)
 
-                p.add_(update)
+                parameter_phase = (
+                    state_comm.phase("parameter_update", p)
+                    if state_comm is not None
+                    else nullcontext()
+                )
+                with parameter_phase:
+                    p.add_(update)
 
         return loss
     

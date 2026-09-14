@@ -20,6 +20,7 @@ from optim.fp8_state import (
     init_fp8_state,
     quantize_fp8_state_,
 )
+from optim.fp8_momentum_update import update_fp8_momentum_
 from .proj_optimizer_templates import GaloreOptimizer, CoordOptimizer, BlockOptimizer
 from ...sota_opt.dion.newton_schulz_funcs import zeropower_via_newtonschulz5_jordan
 
@@ -215,28 +216,41 @@ class MuonBase(FP8StateDictMixin, Optimizer):
                 "size; resharding checkpoints is not implemented."
             )
 
-        buf = (
-            state["momentum_buffer"]
-            if self.qargs is None
-            else dequantize_fp8_state(
-                state, "momentum_buffer", self.qargs, signed=True
-            )
+        reuse_quantized_state = (
+            self.qargs is not None
+            and self._state_comm.reuses_quantized_state_on_wire
         )
-        # EMA: buf = mu * buf + (1 - mu) * grad
-        buf.mul_(momentum).add_(local_grad, alpha=1.0 - momentum)
-
-        g = local_grad.add(buf, alpha=momentum) if nesterov else buf.clone()
-
-        if self.qargs is not None:
-            quantize_fp8_state_(
-                state, "momentum_buffer", buf, self.qargs, signed=True
+        if reuse_quantized_state:
+            with self._state_comm.phase("persistent_update", local_grad):
+                update_fp8_momentum_(
+                    state,
+                    "momentum_buffer",
+                    local_grad,
+                    self.qargs,
+                    momentum=momentum,
+                    gradient_alpha=1.0 - momentum,
+                )
+            buf = None
+            g = None
+        else:
+            buf = (
+                state["momentum_buffer"]
+                if self.qargs is None
+                else dequantize_fp8_state(
+                    state, "momentum_buffer", self.qargs, signed=True
+                )
             )
+            # EMA: buf = mu * buf + (1 - mu) * grad
+            buf.mul_(momentum).add_(local_grad, alpha=1.0 - momentum)
+            g = local_grad.add(buf, alpha=momentum) if nesterov else buf.clone()
 
-        if g.ndim >= 2:
-            if (
-                self.qargs is not None
-                and self._state_comm.reuses_quantized_state_on_wire
-            ):
+            if self.qargs is not None:
+                quantize_fp8_state_(
+                    state, "momentum_buffer", buf, self.qargs, signed=True
+                )
+
+        if grad.ndim >= 2:
+            if reuse_quantized_state:
                 g = self._state_comm.gather_quantized_state_rows(
                     state,
                     "momentum_buffer",
@@ -345,12 +359,14 @@ class CoordMuon(CoordOptimizer, MuonBase):
 
     @torch.no_grad()
     def _proj_params_update(self, grad: torch.Tensor, state: Dict, group: Dict) -> torch.Tensor:
-        grad_down = state["projector"].project_down(grad)
+        with self._state_comm.phase("projection", grad):
+            grad_down = state["projector"].project_down(grad)
         active_lr = group["lr"] * group["proj_params_lr_scale"]
 
         # Stateful Muon on the projected subspace
         update = self._compute_update(grad_down, state, **{**group, "lr": active_lr})
-        update = state["projector"].project_up(update)
+        with self._state_comm.phase("projection", grad):
+            update = state["projector"].project_up(update)
 
         # Stateless Muon on the complement subspace
         inactive_lr = active_lr * group["inactive_lr_scale"]

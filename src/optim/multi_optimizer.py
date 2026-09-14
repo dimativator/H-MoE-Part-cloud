@@ -40,7 +40,24 @@ class MultiOptimizer:
 
     def step(self, closure=None):
         loss = self.proj_opt.step(closure)
-        self.non_proj_opt.step()
+        state_comm = getattr(self.proj_opt, "_state_comm", None)
+        reference = next(
+            (
+                p
+                for group in self.non_proj_opt.param_groups
+                for p in group["params"]
+                if p.grad is not None
+            ),
+            None,
+        )
+        if state_comm is not None and reference is not None:
+            with state_comm.phase("non_proj_optimizer", reference):
+                self.non_proj_opt.step()
+            # The projected optimizer finishes its profile before control returns
+            # here. Flush the additional non-projected phase into the same profile.
+            state_comm.finish_step()
+        else:
+            self.non_proj_opt.step()
         return loss
 
     def zero_grad(self, set_to_none: bool = True):
