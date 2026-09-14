@@ -41,11 +41,17 @@ if (( MPI_SIZE > 1 && MPI_SIZE != NPROC_PER_NODE )); then
     exit 8
 fi
 
-export RANK=${RANK:-${MPI_RANK}}
-export WORLD_SIZE=${WORLD_SIZE:-${MPI_SIZE}}
-export LOCAL_RANK=${LOCAL_RANK:-${MPI_LOCAL_RANK}}
-export MASTER_ADDR=${MASTER_ADDR:-$(hostname -f)}
-export MASTER_PORT=${MASTER_PORT:-29500}
+if (( MPI_SIZE > 1 )); then
+    export RANK=${RANK:-${MPI_RANK}}
+    export WORLD_SIZE=${WORLD_SIZE:-${MPI_SIZE}}
+    export LOCAL_RANK=${LOCAL_RANK:-${MPI_LOCAL_RANK}}
+    export MASTER_ADDR=${MASTER_ADDR:-$(hostname -f)}
+    export MASTER_PORT=${MASTER_PORT:-29500}
+    BENCH_LAUNCHER=(python)
+else
+    unset RANK WORLD_SIZE LOCAL_RANK MASTER_ADDR MASTER_PORT
+    BENCH_LAUNCHER=(torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}")
+fi
 
 OUTPUT_DIR="${RESULTS_ROOT}/${RUN_ID}"
 mkdir -p "${OUTPUT_DIR}" "${EVAL_CACHE_DIR}"
@@ -95,7 +101,7 @@ export TRITON_CACHE_DIR="/tmp/triton-state-comm-${RUN_ID}-rank${MPI_RANK}-$$"
 mkdir -p "${TRITON_CACHE_DIR}"
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-python scripts/benchmarks/optimizer_state_communication_cloud.py \
+"${BENCH_LAUNCHER[@]}" scripts/benchmarks/optimizer_state_communication_cloud.py \
     --datasets-dir "${SYNTHETIC_DATA_DIR}" \
     --eval-cache-dir "${EVAL_CACHE_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
