@@ -41,8 +41,14 @@ case "${MODE}" in
     tight80_full)
         MODE_ARGS=(--models 4.9B --warmup-steps 10 --measure-steps 50 --repeats 3)
         ;;
+    wide5b_probe)
+        MODE_ARGS=(--models 5.0B-wide --methods muon --warmup-steps 2 --measure-steps 3 --repeats 1)
+        ;;
+    wide5b_full)
+        MODE_ARGS=(--models 5.0B-wide --warmup-steps 10 --measure-steps 50 --repeats 3)
+        ;;
     *)
-        echo "MODE must be smoke, full, large_smoke, large_full, max_smoke, max_full, near80_probe, near80_smoke, near80_full, tight80_probe, or tight80_full" >&2
+        echo "MODE must be smoke, full, large_smoke, large_full, max_smoke, max_full, near80_probe, near80_smoke, near80_full, tight80_probe, tight80_full, wide5b_probe, or wide5b_full" >&2
         exit 2
         ;;
 esac

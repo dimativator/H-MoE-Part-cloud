@@ -26,6 +26,7 @@ MODEL_CONFIGS = {
     "4.8B": {"n_layer": 31, "n_embd": 3456, "n_head": 27},
     "4.9B": {"n_layer": 32, "n_embd": 3456, "n_head": 27},
     "5.0B": {"n_layer": 30, "n_embd": 3584, "n_head": 28},
+    "5.0B-wide": {"n_layer": 14, "n_embd": 5120, "n_head": 40},
 }
 METHODS = {
     "muon": {"optimizer": "muon", "fp8": False},
