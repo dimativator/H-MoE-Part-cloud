@@ -26,8 +26,17 @@ case "${MODE}" in
     max_full)
         MODE_ARGS=(--models 4.3B --warmup-steps 10 --measure-steps 50 --repeats 3)
         ;;
+    near80_probe)
+        MODE_ARGS=(--models 5.0B --methods muon --warmup-steps 2 --measure-steps 3 --repeats 1)
+        ;;
+    near80_smoke)
+        MODE_ARGS=(--models 5.0B --warmup-steps 2 --measure-steps 3 --repeats 1)
+        ;;
+    near80_full)
+        MODE_ARGS=(--models 5.0B --warmup-steps 10 --measure-steps 50 --repeats 3)
+        ;;
     *)
-        echo "MODE must be smoke, full, large_smoke, large_full, max_smoke, or max_full" >&2
+        echo "MODE must be smoke, full, large_smoke, large_full, max_smoke, max_full, near80_probe, near80_smoke, or near80_full" >&2
         exit 2
         ;;
 esac
