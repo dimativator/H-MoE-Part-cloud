@@ -863,10 +863,12 @@ def train(
                     "optimizer_state_persistent_update_ms_mean",
                     "optimizer_state_parameter_update_ms_mean",
                     "optimizer_state_adamw_fused_ms_mean",
-                    "optimizer_state_non_proj_optimizer_ms_mean",
                     "optimizer_state_projection_ms_mean",
                 )
             )
+            # ``non_proj_optimizer`` wraps the complete child optimizer step and
+            # therefore overlaps its comm/codec/NS/parameter phase timers. Keep
+            # it as an inclusive diagnostic, but do not double-count it here.
             result["optimizer_other_ms_mean"] = max(
                 0.0,
                 result["optimizer_step_ms_mean"] - accounted_optimizer_ms,
