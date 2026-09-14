@@ -364,6 +364,13 @@ class CoordMuon(CoordOptimizer, MuonBase):
         return update
 
 
+class FP8CoordMuon(CoordMuon):
+    """Backward-compatible name for CoordMuon with FP8 optimizer state."""
+
+    def __init__(self, *args, qargs, **kwargs):
+        super().__init__(*args, qargs=qargs, **kwargs)
+
+
 # ─── GaloreMuon ─────────────────────────────────────────────────────────────
 
 class GaloreMuon(GaloreOptimizer, MuonBase):
