@@ -24,6 +24,7 @@ MODEL_CONFIGS = {
     "2.8B": {"n_layer": 32, "n_embd": 2560, "n_head": 20},
     "4.3B": {"n_layer": 32, "n_embd": 3200, "n_head": 25},
     "4.8B": {"n_layer": 31, "n_embd": 3456, "n_head": 27},
+    "4.9B": {"n_layer": 32, "n_embd": 3456, "n_head": 27},
     "5.0B": {"n_layer": 30, "n_embd": 3584, "n_head": 28},
 }
 METHODS = {
