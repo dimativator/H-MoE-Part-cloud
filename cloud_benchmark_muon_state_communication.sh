@@ -12,6 +12,7 @@ mpi_local_rank=${OMPI_COMM_WORLD_LOCAL_RANK:-0}
 tp=${TP:-1}
 pp=${PP:-2}
 dp=${DP:-2}
+transformer_impl=${TRANSFORMER_IMPL:-local}
 expected_world_size=$((tp * pp * dp))
 log=$log_dir/muon-state-comm-${run_id}-rank${mpi_rank}.log
 mkdir -p "$log_dir" "$output_dir" "$root/runtime-tmp/triton-cache"
@@ -49,6 +50,7 @@ fi
         --tensor-parallel-size "$tp" \
         --pipeline-parallel-size "$pp" \
         --data-parallel-size "$dp" \
+        --transformer-impl "$transformer_impl" \
         "$@"
 ) >"$log" 2>&1
 code=$?

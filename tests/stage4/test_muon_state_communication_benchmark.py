@@ -147,3 +147,10 @@ def test_write_results_adds_requested_derived_timings(tmp_path):
     table = (tmp_path / "results.md").read_text()
     assert "Outside optimizer" in table
     assert "Total state communication" in table
+
+
+def test_cloud_launcher_defaults_to_local_transformer_backend():
+    launcher = Path("cloud_benchmark_muon_state_communication.sh").read_text()
+
+    assert "transformer_impl=${TRANSFORMER_IMPL:-local}" in launcher
+    assert '--transformer-impl "$transformer_impl"' in launcher
