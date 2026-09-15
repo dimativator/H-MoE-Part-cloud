@@ -1,32 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Two independent Cloud.ru queues for the Llama-257M 1xC GaLore rho sweep.
-# In this codebase rho is the retained subspace fraction (`--density`).
+# Two independent Cloud.ru queues for the Llama-257M 1xC Frugal rho sweep.
+# Frugal is the coordinate-projection AdamW variant (`coord_adamw`).
 
 QUEUE_ID=${QUEUE_ID:-A}
 MODE=${MODE:-full}
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
-RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-wsd-20260914}
+RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/frugal-rho-257m-1xc-wsd-20260915}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LATEST_CKPT_INTERVAL=${LATEST_CKPT_INTERVAL:-5000}
 SAVE_CHECKPOINTS=${SAVE_CHECKPOINTS:-1}
 RUN_SEED=${SEED:-0}
 
 case "${RESULTS_DIR}" in
-    /workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-*|\
-    /workspace-SR006.nfs3/dimativator/galore-rho-257m-1xc-*) ;;
+    /workspace-SR006.nfs2/dimativator/frugal-rho-257m-1xc-*|\
+    /workspace-SR006.nfs3/dimativator/frugal-rho-257m-1xc-*) ;;
     *)
         echo "Refusing checkpoint cleanup outside the dedicated experiment root: ${RESULTS_DIR}" >&2
         exit 2
         ;;
 esac
 case "${QUEUE_ID}" in
-    A) RHOS=(0.8 0.6 0.4 0.2 0.1) ;;
-    B) RHOS=(0.7 0.5 0.3 0.15) ;;
-    C) RHOS=(1.0) ;;
-    D) RHOS=(0.9) ;;
-    *) echo "QUEUE_ID must be A, B, C, or D" >&2; exit 2 ;;
+    A) RHOS=(1.0 0.8 0.6 0.4 0.2 0.1) ;;
+    B) RHOS=(0.9 0.7 0.5 0.3 0.15) ;;
+    *) echo "QUEUE_ID must be A or B" >&2; exit 2 ;;
 esac
 case "${MODE}" in
     smoke|full) ;;
@@ -70,7 +68,7 @@ fi
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-export TRITON_CACHE_DIR="/tmp/triton-galore-rho-${QUEUE_ID}-${MODE}-$$"
+export TRITON_CACHE_DIR="/tmp/triton-frugal-rho-${QUEUE_ID}-${MODE}-$$"
 mkdir -p "${TRITON_CACHE_DIR}"
 
 remove_checkpoint_tree() {
@@ -85,8 +83,8 @@ remove_checkpoint_tree() {
 run_rho() {
     local rho=$1
     local suffix=${rho/./p}
-    local experiment="llama257M_galore_rho${suffix}_bf16_wsd_lr1e-3_wd0p1_1xC_1gpu"
-    local group="1xChinchilla_257M_galore_rho_wsd_cloud"
+    local experiment="llama257M_frugal_rho${suffix}_bf16_wsd_lr1e-3_wd0p1_1xC_1gpu"
+    local group="1xChinchilla_257M_frugal_rho_wsd_cloud"
     local exp_dir="${RESULTS_DIR}/${group}/${experiment}"
     local marker="${RESULTS_DIR}/.${experiment}.${MODE}.done"
     [[ -f "${marker}" ]] && return
@@ -128,9 +126,10 @@ run_rho() {
         --sequence-length 1024 --streaming --workers 8 \
         --model llama --n-layer 12 --n-embd 1024 --n-head 8 --multiple-of 256 \
         --dtype bfloat16 \
-        --opt galore_adamw --non_proj_opt adamw \
+        --opt coord_adamw --non_proj_opt adamw \
         --lr 1e-3 --weight-decay 0.1 --beta1 0.9 --beta2 0.999 \
         --grad-clip 1.0 --density "${rho}" --update_gap 50 \
+        --coord_choice columns \
         --scheduler wsd --warmup-steps "${warmup}" --iterations "${iterations}" \
         --wsd-fract-decay 0.1 --wsd-final-lr-scale 0 --decay-type cosine \
         --batch-size 32 --acc-steps 4 \
