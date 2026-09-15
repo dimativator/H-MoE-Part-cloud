@@ -45,6 +45,7 @@ fi
     export PYTHONUNBUFFERED=1
     export PYTHONPATH="$root/third_party/Megatron-LM:$root/third_party/emerging-optimizers:$root"
     export TRITON_CACHE_DIR="$root/runtime-tmp/triton-cache"
+    make -C "$root/third_party/Megatron-LM/megatron/core/datasets"
     python "$root/scripts/benchmark_muon_state_communication.py" \
         --output-dir "$output_dir" \
         --tensor-parallel-size "$tp" \

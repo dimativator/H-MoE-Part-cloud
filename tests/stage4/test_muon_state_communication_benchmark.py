@@ -154,3 +154,13 @@ def test_cloud_launcher_defaults_to_local_transformer_backend():
 
     assert "transformer_impl=${TRANSFORMER_IMPL:-local}" in launcher
     assert '--transformer-impl "$transformer_impl"' in launcher
+    assert 'make -C "$root/third_party/Megatron-LM/megatron/core/datasets"' in launcher
+
+
+def test_dataset_helper_can_use_torch_bundled_pybind11_headers():
+    makefile = Path(
+        "third_party/Megatron-LM/megatron/core/datasets/Makefile"
+    ).read_text()
+
+    assert "python3 -m pybind11 --includes" in makefile
+    assert "torch.__path__[0] + '/include -I'" in makefile
