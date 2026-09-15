@@ -295,6 +295,24 @@ class OptimizerConfig:
     """Optimizer for nonlinear parameters (embeddings, biases, norms) when using muon.
     One of 'adam' or 'lion'. Defaults to 'adam'."""
 
+    muon_distributed_state_sharding: bool = True
+    """Row-shard Muon momentum over the data-parallel group."""
+
+    muon_profile_state_communication: bool = False
+    """Emit per-rank Muon optimizer phase timings for benchmark collection."""
+
+    frugal_density: float = 0.25
+    """Fraction of columns with persistent Muon momentum in FRUGAL Muon-Muon."""
+
+    frugal_update_gap: int = 50
+    """Steps between resampling FRUGAL's stateful coordinates."""
+
+    frugal_coord_choice: str = "columns"
+    """Coordinate projection axis. The Megatron benchmark currently supports columns."""
+
+    frugal_inactive_lr_scale: float = 1.0
+    """Learning-rate multiplier for stateless Muon on inactive coordinates."""
+
     # Lion.
     lion_beta1: float = 0.95
     """First beta coefficient for Lion optimizer (used in sign update). Defaults to 0.95."""
