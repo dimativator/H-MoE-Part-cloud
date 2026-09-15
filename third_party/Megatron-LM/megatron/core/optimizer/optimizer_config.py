@@ -301,6 +301,12 @@ class OptimizerConfig:
     muon_profile_state_communication: bool = False
     """Emit per-rank Muon optimizer phase timings for benchmark collection."""
 
+    muon_fp8_bucket_bytes: int = 0
+    """Maximum local FP8 state bytes per all-gather bucket; zero disables bucketing."""
+
+    muon_fused_fp8_ns_input: bool = False
+    """Fuse FP8 decode, Nesterov addition, normalization, and BF16 NS preparation."""
+
     frugal_density: float = 0.25
     """Fraction of columns with persistent Muon momentum in FRUGAL Muon-Muon."""
 

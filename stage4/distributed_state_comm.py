@@ -5,13 +5,16 @@ from __future__ import annotations
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Dict, Iterator, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
 
 from stage4.fp8_optimizer_states import init_fp8_state, quantize_fp8_state_
-from stage4.fp8_state_wire import dequantize_fp8_state_and_add
+from stage4.fp8_state_wire import (
+    dequantize_fp8_state_and_add,
+    prepare_fp8_state_ns_input,
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,23 @@ class _PackedPart:
     nbytes: int
 
 
+@dataclass(frozen=True)
+class FP8GatherRequest:
+    state: Dict[str, Any]
+    prefix: str
+    original_rows: int
+    gradient: torch.Tensor | None
+    gradient_alpha: float
+    prepare_for_ns: bool = False
+
+
+@dataclass(frozen=True)
+class GatheredFP8Input:
+    tensor: torch.Tensor
+    normalized: bool = False
+    transposed: bool = False
+
+
 def _align_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
 
@@ -44,6 +64,7 @@ class DistributedStateCommunicator:
         wire_dtype: str,
         profile: bool,
         group_size: int = 128,
+        fp8_bucket_bytes: int = 0,
     ) -> None:
         if wire_dtype not in {"bfloat16", "fp8"}:
             raise ValueError("wire_dtype must be 'bfloat16' or 'fp8'")
@@ -52,6 +73,7 @@ class DistributedStateCommunicator:
         self.wire_dtype = wire_dtype
         self.profile_enabled = profile
         self.group_size = group_size
+        self.fp8_bucket_bytes = fp8_bucket_bytes
         self._profile: Dict[str, float] = {}
         self._last_profile: Dict[str, float] = {}
         self._events = []
@@ -193,6 +215,80 @@ class DistributedStateCommunicator:
         self._record_bytes(packet.numel(), state_derived=True)
         return output
 
+    def gather_fp8_states(
+        self, requests: Sequence[FP8GatherRequest]
+    ) -> Iterator[tuple[int, GatheredFP8Input]]:
+        """Gather persistent FP8 states in bounded contiguous communication buckets."""
+        if not self.reuses_quantized_state_on_wire:
+            raise RuntimeError("FP8 state gather requires at least two DP ranks")
+        layouts = []
+        for index, request in enumerate(requests):
+            specs, packet_bytes = self._fp8_layout(request.state, request.prefix)
+            layouts.append((index, request, specs, packet_bytes))
+
+        buckets = []
+        current = []
+        current_bytes = 0
+        limit = self.fp8_bucket_bytes
+        for layout in layouts:
+            packet_bytes = layout[3]
+            aligned_start = _align_up(current_bytes, 4)
+            if current and limit > 0 and aligned_start + packet_bytes > limit:
+                buckets.append((current, current_bytes))
+                current = []
+                current_bytes = 0
+                aligned_start = 0
+            current.append((*layout, aligned_start))
+            current_bytes = aligned_start + packet_bytes
+        if current:
+            buckets.append((current, current_bytes))
+
+        for bucket, bucket_bytes in buckets:
+            with self.phase("wire_encode", bucket[0][1].state[bucket[0][1].prefix]):
+                local = torch.empty(
+                    _align_up(bucket_bytes, 4),
+                    dtype=torch.uint8,
+                    device=bucket[0][1].state[bucket[0][1].prefix].device,
+                )
+                for _, request, specs, _, packet_offset in bucket:
+                    self._copy_fp8_packet(local, packet_offset, request.state, specs)
+            gathered = self._all_gather(local)
+            packets = gathered.view(self.world_size, local.numel())
+            self._record_bytes(local.numel(), state_derived=True)
+            for index, request, specs, _, packet_offset in bucket:
+                fields = self._unpack_packets(packets, packet_offset, specs)
+                output_shape = torch.Size(
+                    (request.original_rows, request.state[request.prefix].shape[1])
+                )
+                with self.phase("wire_decode", request.state[request.prefix]):
+                    if request.prepare_for_ns:
+                        output, transposed = prepare_fp8_state_ns_input(
+                            fields[request.prefix],
+                            fields[f"scale_{request.prefix}"],
+                            fields[f"expand_{request.prefix}"],
+                            fields[f"sqrt_minmax_{request.prefix}"],
+                            group_size=self.group_size,
+                            output_shape=output_shape,
+                            gradient=request.gradient,
+                            gradient_alpha=request.gradient_alpha,
+                        )
+                        result = GatheredFP8Input(
+                            output, normalized=True, transposed=transposed
+                        )
+                    else:
+                        output = dequantize_fp8_state_and_add(
+                            fields[request.prefix],
+                            fields[f"scale_{request.prefix}"],
+                            fields[f"expand_{request.prefix}"],
+                            fields[f"sqrt_minmax_{request.prefix}"],
+                            group_size=self.group_size,
+                            output_shape=output_shape,
+                            gradient=request.gradient,
+                            gradient_alpha=request.gradient_alpha,
+                        )
+                        result = GatheredFP8Input(output)
+                yield index, result
+
     def gather_ephemeral_fp8(
         self, shard: RowShard, *, state_derived: bool
     ) -> torch.Tensor:
@@ -245,6 +341,19 @@ class DistributedStateCommunicator:
     def _pack_fp8_state(
         state: Dict[str, Any], prefix: str
     ) -> Tuple[torch.Tensor, Tuple[_PackedPart, ...]]:
+        specs, packet_bytes = DistributedStateCommunicator._fp8_layout(state, prefix)
+        packet = torch.empty(
+            packet_bytes,
+            dtype=torch.uint8,
+            device=state[prefix].device,
+        )
+        DistributedStateCommunicator._copy_fp8_packet(packet, 0, state, specs)
+        return packet, specs
+
+    @staticmethod
+    def _fp8_layout(
+        state: Dict[str, Any], prefix: str
+    ) -> Tuple[Tuple[_PackedPart, ...], int]:
         names = (
             prefix,
             f"scale_{prefix}",
@@ -262,15 +371,33 @@ class DistributedStateCommunicator:
             nbytes = part.numel() * alignment
             specs.append(_PackedPart(name, part.dtype, offset, part.numel(), nbytes))
             offset += nbytes
-        packet = torch.empty(
-            _align_up(offset, max_alignment),
-            dtype=torch.uint8,
-            device=state[prefix].device,
-        )
+        return tuple(specs), _align_up(offset, max_alignment)
+
+    @staticmethod
+    def _copy_fp8_packet(
+        packet: torch.Tensor,
+        packet_offset: int,
+        state: Dict[str, Any],
+        specs: Tuple[_PackedPart, ...],
+    ) -> None:
         for spec in specs:
             source = state[spec.key].contiguous().view(torch.uint8).reshape(-1)
-            packet.narrow(0, spec.offset, spec.nbytes).copy_(source)
-        return packet, tuple(specs)
+            packet.narrow(0, packet_offset + spec.offset, spec.nbytes).copy_(source)
+
+    @staticmethod
+    def _unpack_packets(
+        packets: torch.Tensor,
+        packet_offset: int,
+        specs: Tuple[_PackedPart, ...],
+    ) -> Dict[str, torch.Tensor]:
+        return {
+            spec.key: packets.narrow(
+                1, packet_offset + spec.offset, spec.nbytes
+            )
+            .view(spec.dtype)
+            .reshape(packets.shape[0], spec.numel)
+            for spec in specs
+        }
 
     def _unpack(
         self,

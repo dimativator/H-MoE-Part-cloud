@@ -58,6 +58,8 @@ def _state_sharded_muon_config_to_kwargs(config, model_chunks, pg_collection):
             "state_precision": "fp8" if precision == "fp8" else "bfloat16",
             "distributed_state_sharding": config.muon_distributed_state_sharding,
             "profile_state_communication": config.muon_profile_state_communication,
+            "fp8_bucket_bytes": config.muon_fp8_bucket_bytes,
+            "fused_fp8_ns_input": config.muon_fused_fp8_ns_input,
             "frugal_density": config.frugal_density,
             "frugal_update_gap": config.frugal_update_gap,
             "frugal_coord_choice": config.frugal_coord_choice,
@@ -163,6 +165,18 @@ def add_stage4_args(parser):
         "--muon-profile-state-communication",
         action=argparse.BooleanOptionalAction,
         default=False,
+    )
+    group.add_argument(
+        "--muon-fp8-bucket-bytes",
+        type=int,
+        default=0,
+        help="pack persistent FP8 state packets into communication buckets; 0 disables",
+    )
+    group.add_argument(
+        "--muon-fused-fp8-ns-input",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="fuse FP8 decode, Nesterov addition, normalization, and BF16 NS input",
     )
     group.add_argument("--frugal-density", type=float, default=0.25)
     group.add_argument("--frugal-update-gap", type=int, default=50)

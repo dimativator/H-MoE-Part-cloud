@@ -74,6 +74,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--measure-steps", type=int, default=30)
     parser.add_argument("--density", type=float, default=0.25)
     parser.add_argument("--update-gap", type=int, default=50)
+    parser.add_argument("--fp8-bucket-bytes", type=int, default=64 * 2**20)
+    parser.add_argument(
+        "--fused-fp8-ns-input",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=int, default=7200)
     parser.add_argument(
         "--output-dir",
@@ -95,6 +102,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("global batch size must be divisible by data parallel size")
     if args.global_batch_size < args.micro_batch_size * args.data_parallel_size:
         parser.error("global batch is smaller than one micro batch per DP rank")
+    if args.fp8_bucket_bytes < 0:
+        parser.error("FP8 bucket bytes must be non-negative")
+    if args.repeats < 1:
+        parser.error("repeats must be positive")
     if any(METHODS[method][0] == "frugal_muon_muon" for method in args.methods):
         if args.tensor_parallel_size != 1:
             parser.error("FRUGAL Muon-Muon currently requires tensor parallel size 1")
@@ -116,6 +127,8 @@ def build_command(
     measure_steps: int,
     density: float,
     update_gap: int,
+    fp8_bucket_bytes: int = 64 * 2**20,
+    fused_fp8_ns_input: bool = True,
     external_distributed: bool = False,
     transformer_impl: str = "transformer_engine",
 ) -> list[str]:
@@ -192,6 +205,8 @@ def build_command(
         "medium",
         "--muon-distributed-state-sharding",
         "--muon-profile-state-communication",
+        "--muon-fp8-bucket-bytes",
+        str(fp8_bucket_bytes),
         "--frugal-density",
         str(density),
         "--frugal-update-gap",
@@ -240,6 +255,8 @@ def build_command(
         "--log-interval",
         "1",
     ]
+    if fused_fp8_ns_input:
+        command.append("--muon-fused-fp8-ns-input")
     if transformer_impl == "local":
         command.extend(
             (
@@ -305,7 +322,9 @@ def _has_complete_samples(
     return len(profile_steps) == measure_steps
 
 
-def run_one(root: Path, args: argparse.Namespace, model: str, method: str) -> dict:
+def run_one(
+    root: Path, args: argparse.Namespace, model: str, method: str, repeat: int = 0
+) -> dict:
     external_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
     command = build_command(
         root,
@@ -321,6 +340,8 @@ def run_one(root: Path, args: argparse.Namespace, model: str, method: str) -> di
         measure_steps=args.measure_steps,
         density=args.density,
         update_gap=args.update_gap,
+        fp8_bucket_bytes=args.fp8_bucket_bytes,
+        fused_fp8_ns_input=args.fused_fp8_ns_input,
         external_distributed=external_distributed,
         transformer_impl=args.transformer_impl,
     )
@@ -361,7 +382,7 @@ def run_one(root: Path, args: argparse.Namespace, model: str, method: str) -> di
     rank_suffix = f"_rank{rank}" if external_distributed else ""
     log_path = (
         log_dir
-        / f"{model}_{method}_tp{args.tensor_parallel_size}_pp{args.pipeline_parallel_size}_dp{args.data_parallel_size}{rank_suffix}.log"
+        / f"{model}_{method}_repeat{repeat}_tp{args.tensor_parallel_size}_pp{args.pipeline_parallel_size}_dp{args.data_parallel_size}{rank_suffix}.log"
     )
     log_path.write_text("COMMAND: " + " ".join(command) + "\n\n" + output)
     row = {
@@ -385,6 +406,7 @@ def run_one(root: Path, args: argparse.Namespace, model: str, method: str) -> di
         "wall_time_seconds": round(time.monotonic() - started, 3),
         "log": str(log_path),
         "rank": rank,
+        "repeat": repeat,
     }
     row.update(parse_output(output, args.warmup_steps, args.measure_steps))
     row["status"] = (
@@ -408,7 +430,7 @@ def aggregate_external(rank_rows: list[list[dict]]) -> list[dict]:
     grouped = defaultdict(list)
     for rows in rank_rows:
         for row in rows:
-            grouped[(row["model"], row["method"])].append(row)
+            grouped[(row["model"], row["method"], row.get("repeat", 0))].append(row)
 
     aggregated = []
     for key, rows in grouped.items():
@@ -453,6 +475,33 @@ def aggregate_external(rank_rows: list[list[dict]]) -> list[dict]:
     return sorted(aggregated, key=lambda row: (row["model"], row["method"]))
 
 
+def aggregate_repeats(rows: list[dict]) -> list[dict]:
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[(row["model"], row["method"])].append(row)
+    aggregated = []
+    timing_fields = ("mean_step_ms", *PHASES)
+    for _, repeats in grouped.items():
+        for row in repeats:
+            _add_derived_timings(row)
+        result = dict(repeats[0])
+        result["repeats"] = len(repeats)
+        result["samples"] = sum(int(row.get("samples", 0)) for row in repeats)
+        for field in (*timing_fields, "outside_optimizer_ms", "total_state_communication_ms"):
+            values = [float(row[field]) for row in repeats if row.get(field) is not None]
+            result[field] = _mean(values)
+            result[f"{field}_std"] = (
+                round(statistics.stdev(values), 4) if len(values) > 1 else 0.0
+            )
+        result["peak_allocated_bytes"] = max(
+            (row.get("peak_allocated_bytes") or 0 for row in repeats), default=None
+        )
+        if any(row["status"] != "ok" for row in repeats):
+            result["status"] = "error"
+        aggregated.append(result)
+    return sorted(aggregated, key=lambda row: (row["model"], row["method"]))
+
+
 def _public_rows(rows: list[dict]) -> list[dict]:
     return [
         {key: value for key, value in row.items() if not key.startswith("_")}
@@ -460,25 +509,29 @@ def _public_rows(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _add_derived_timings(row: dict) -> None:
+    optimizer_ms = row.get("optimizer_ms")
+    step_ms = row.get("mean_step_ms")
+    row["outside_optimizer_ms"] = (
+        round(step_ms - optimizer_ms, 4)
+        if step_ms is not None and optimizer_ms is not None
+        else None
+    )
+    communication_phases = (
+        row.get("wire_encode_ms"),
+        row.get("state_all_gather_ms"),
+        row.get("wire_decode_ms"),
+    )
+    row["total_state_communication_ms"] = (
+        round(sum(communication_phases), 4)
+        if all(value is not None for value in communication_phases)
+        else None
+    )
+
+
 def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
     for row in rows:
-        optimizer_ms = row.get("optimizer_ms")
-        step_ms = row.get("mean_step_ms")
-        row["outside_optimizer_ms"] = (
-            round(step_ms - optimizer_ms, 4)
-            if step_ms is not None and optimizer_ms is not None
-            else None
-        )
-        communication_phases = (
-            row.get("wire_encode_ms"),
-            row.get("state_all_gather_ms"),
-            row.get("wire_decode_ms"),
-        )
-        row["total_state_communication_ms"] = (
-            round(sum(communication_phases), 4)
-            if all(value is not None for value in communication_phases)
-            else None
-        )
+        _add_derived_timings(row)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -501,7 +554,14 @@ def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
 
         def timing(key):
             value = row.get(key)
-            return "n/a" if value is None else f"{value:.1f}"
+            if value is None:
+                return "n/a"
+            std = row.get(f"{key}_std")
+            return (
+                f"{value:.1f} ± {std:.1f}"
+                if row.get("repeats", 1) > 1 and std is not None
+                else f"{value:.1f}"
+            )
 
         peak = row.get("peak_allocated_bytes")
         peak_text = "n/a" if peak is None else f"{peak / 2**30:.2f} GB"
@@ -552,17 +612,18 @@ def main() -> int:
         )
     for model in args.models:
         for method in args.methods:
-            print(f"RUN model={model} method={method}", flush=True)
-            row = run_one(root, args, model, method)
-            if row:
-                rows.append(row)
-                if external_world_size == 1:
-                    write_results(args, _public_rows(rows))
-                print(
-                    f"RESULT status={row['status']} step={row['mean_step_ms']} "
-                    f"comm={row['state_all_gather_ms']}",
-                    flush=True,
-                )
+            for repeat in range(args.repeats):
+                print(f"RUN model={model} method={method} repeat={repeat}", flush=True)
+                row = run_one(root, args, model, method, repeat)
+                if row:
+                    rows.append(row)
+                    if external_world_size == 1:
+                        write_results(args, aggregate_repeats(_public_rows(rows)))
+                    print(
+                        f"RESULT status={row['status']} step={row['mean_step_ms']} "
+                        f"comm={row['state_all_gather_ms']}",
+                        flush=True,
+                    )
     if external_world_size == 1:
         return int(any(row["status"] != "ok" for row in rows))
 
@@ -585,7 +646,7 @@ def main() -> int:
     if missing:
         raise SystemExit(f"timed out waiting for rank results: {missing}")
     rank_rows = [json.loads(path.read_text()) for path in expected_paths]
-    rows = aggregate_external(rank_rows)
+    rows = aggregate_repeats(aggregate_external(rank_rows))
     write_results(args, rows)
     return int(any(row["status"] != "ok" for row in rows))
 

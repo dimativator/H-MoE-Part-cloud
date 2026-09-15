@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Literal, Optional
 
 import torch
 import torch.distributed as dist
 
 from emerging_optimizers import utils
+from emerging_optimizers.orthogonalized_optimizers import muon_utils
+from emerging_optimizers.orthogonalized_optimizers.muon import get_muon_scale_factor
 from megatron.core.optimizer.emerging_optimizers import TensorParallelMuon
 from megatron.core.utils import get_pg_size
 
-from stage4.distributed_state_comm import DistributedStateCommunicator, RowShard
+from stage4.distributed_state_comm import (
+    DistributedStateCommunicator,
+    FP8GatherRequest,
+    GatheredFP8Input,
+    RowShard,
+)
 from stage4.fp8_momentum import update_fp8_momentum_
 from stage4.fp8_optimizer_states import (
     FP8StateDictMixin,
@@ -23,6 +31,15 @@ from stage4.fp8_optimizer_states import (
 
 
 PROFILE_PREFIX = "[OPTIMIZER STATE COMM PROFILE] "
+
+
+@dataclass
+class _PendingFP8Matrix:
+    parameter: torch.Tensor
+    grad: torch.Tensor
+    state: Dict[str, Any]
+    lr: float
+    active_indices: torch.Tensor | None
 
 
 def _group_root(process_group) -> int:
@@ -68,6 +85,8 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
         state_precision: Literal["bfloat16", "fp8"] = "bfloat16",
         distributed_state_sharding: bool = True,
         profile_state_communication: bool = False,
+        fp8_bucket_bytes: int = 0,
+        fused_fp8_ns_input: bool = False,
         frugal_density: float = 0.25,
         frugal_update_gap: int = 50,
         frugal_coord_choice: str = "columns",
@@ -119,6 +138,11 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
         self.frugal_update_gap = frugal_update_gap
         self.frugal_coord_choice = frugal_coord_choice
         self.frugal_inactive_lr_scale = frugal_inactive_lr_scale
+        self.coefficient_type = coefficient_type
+        self.num_ns_steps = num_ns_steps
+        self.scale_mode = scale_mode
+        self.extra_scale_factor = extra_scale_factor
+        self.fused_fp8_ns_input = fused_fp8_ns_input
         dp_group = None if pg_collection is None else pg_collection.dp_cp
         self.state_comm = DistributedStateCommunicator(
             dp_group,
@@ -126,6 +150,7 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
             wire_dtype="fp8" if state_precision == "fp8" else "bfloat16",
             profile=profile_state_communication,
             group_size=self.group_size,
+            fp8_bucket_bytes=fp8_bucket_bytes,
         )
         self._profile_step = 0
         self._defer_profile_emit = False
@@ -279,6 +304,124 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
         with phase, utils.fp32_matmul_precision(self.fp32_matmul_prec):
             return self.orthogonalize(parameter, ns_input)
 
+    def _can_fuse_ns_input(self, parameter: torch.Tensor) -> bool:
+        return self.fused_fp8_ns_input and not (
+            self.split_qkv and self.is_qkv_fn(parameter)
+        )
+
+    def _orthogonalize_prepared_profiled(
+        self,
+        parameter: torch.Tensor,
+        prepared: GatheredFP8Input,
+        original_shape: torch.Size,
+    ) -> torch.Tensor:
+        if not prepared.normalized:
+            return self._orthogonalize_profiled(parameter, prepared.tensor)
+        phase = self.state_comm.phase("newton_schulz", prepared.tensor)
+        with phase, utils.fp32_matmul_precision(self.fp32_matmul_prec):
+            coefficients = muon_utils._COEFFICIENT_SETS[self.coefficient_type]
+            mode = "repeat_last" if self.coefficient_type == "polar_express" else "cycle"
+            coeff_iter = muon_utils.get_coefficient_iterator(
+                self.num_ns_steps, coefficients, mode=mode
+            )
+            output = prepared.tensor
+            for a, b, c in coeff_iter:
+                output = muon_utils.newton_schulz_step(
+                    output, a, b, c, tp_group=None
+                )
+            output = output.float()
+            if prepared.transposed:
+                output = output.mT
+            scale = get_muon_scale_factor(
+                original_shape[0], original_shape[1], mode=self.scale_mode
+            )
+            return output * scale * self.extra_scale_factor
+
+    def _apply_update(
+        self, parameter: torch.Tensor, update: torch.Tensor, lr: float
+    ) -> None:
+        self.pre_weight_update_fn_inplace(parameter, update)
+        parameter.add_(update, alpha=-lr)
+        self.post_weight_update_fn_inplace(parameter)
+
+    def _step_fp8_bucketed(self, group: dict) -> None:
+        pending: list[_PendingFP8Matrix] = []
+        requests: list[FP8GatherRequest] = []
+        for parameter in group["params"]:
+            if parameter.grad is None:
+                continue
+            grad = parameter.grad
+            state = self.state[parameter]
+            self._apply_weight_decay_inplace(
+                parameter, grad, group["lr"], group["weight_decay"]
+            )
+            if grad.ndim != 2:
+                self._apply_update(
+                    parameter,
+                    self._vector_update(grad, state, group["momentum"]),
+                    group["lr"],
+                )
+                continue
+
+            active_indices = None
+            stateful_grad = grad
+            if self._is_frugal_parameter(parameter):
+                self._refresh_projection(parameter, state)
+                active_indices = state["active_indices"]
+                stateful_grad = grad[:, active_indices]
+            shard = self.state_comm.local_rows(stateful_grad)
+            self._update_fp8_state(state, shard.tensor.float(), group["momentum"])
+            nesterov_alpha = (
+                (1.0 - group["momentum"]) / group["momentum"]
+                if self.nesterov
+                else 0.0
+            )
+            requests.append(
+                FP8GatherRequest(
+                    state=state,
+                    prefix="momentum_buffer",
+                    original_rows=shard.original_rows,
+                    gradient=stateful_grad if self.nesterov else None,
+                    gradient_alpha=nesterov_alpha,
+                    prepare_for_ns=self._can_fuse_ns_input(parameter),
+                )
+            )
+            pending.append(
+                _PendingFP8Matrix(
+                    parameter, grad, state, group["lr"], active_indices
+                )
+            )
+
+        for index, gathered in self.state_comm.gather_fp8_states(requests):
+            item = pending[index]
+            stateful_shape = (
+                item.grad.shape
+                if item.active_indices is None
+                else torch.Size((item.grad.shape[0], item.active_indices.numel()))
+            )
+            stateful_update = self._orthogonalize_prepared_profiled(
+                item.parameter, gathered, stateful_shape
+            )
+            if item.active_indices is None:
+                update = stateful_update
+            else:
+                mask = torch.ones(
+                    item.grad.shape[1], dtype=torch.bool, device=item.grad.device
+                )
+                mask[item.active_indices] = False
+                inactive_indices = torch.where(mask)[0]
+                update = torch.zeros_like(item.grad)
+                update[:, item.active_indices] = stateful_update.to(update.dtype)
+                if inactive_indices.numel() > 0:
+                    inactive_grad = item.grad[:, inactive_indices]
+                    inactive_update = self._orthogonalize_profiled(
+                        item.parameter, self._stateless_ns_input(inactive_grad)
+                    )
+                    update[:, inactive_indices] = (
+                        inactive_update * self.frugal_inactive_lr_scale
+                    ).to(update.dtype)
+            self._apply_update(item.parameter, update, item.lr)
+
     def _matrix_update(
         self,
         parameter: torch.Tensor,
@@ -394,6 +537,13 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
         with optimizer_phase:
             for group in self.param_groups:
                 self._init_group(group)
+                if (
+                    self.state_precision == "fp8"
+                    and self.state_comm.enabled
+                    and self.state_comm.fp8_bucket_bytes > 0
+                ):
+                    self._step_fp8_bucketed(group)
+                    continue
                 for parameter in group["params"]:
                     if parameter.grad is None:
                         continue
@@ -408,9 +558,7 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
                         )
                     else:
                         update = self._vector_update(grad, state, group["momentum"])
-                    self.pre_weight_update_fn_inplace(parameter, update)
-                    parameter.add_(update, alpha=-group["lr"])
-                    self.post_weight_update_fn_inplace(parameter)
+                    self._apply_update(parameter, update, group["lr"])
         profile = self.state_comm.finish_step()
         self._emit_profile(profile)
         self._profile_step += 1

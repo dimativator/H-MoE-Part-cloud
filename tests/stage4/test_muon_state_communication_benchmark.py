@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from scripts import benchmark_muon_state_communication as bench
 from scripts.benchmark_muon_state_communication import (
     _has_complete_samples,
+    aggregate_repeats,
     aggregate_external,
     build_command,
     parse_output,
@@ -32,6 +33,8 @@ def test_pp2_dp2_command_uses_four_processes_without_megatron_distopt():
     assert command[command.index("--optimizer") + 1] == "frugal_muon_muon"
     assert command[command.index("--optimizer-state-precision") + 1] == "fp8"
     assert "--use-distributed-optimizer" not in command
+    assert command[command.index("--muon-fp8-bucket-bytes") + 1] == str(64 * 2**20)
+    assert "--muon-fused-fp8-ns-input" in command
 
 
 def test_external_mpi_command_does_not_start_nested_torchrun():
@@ -148,6 +151,33 @@ def test_write_results_adds_requested_derived_timings(tmp_path):
     table = (tmp_path / "results.md").read_text()
     assert "Outside optimizer" in table
     assert "Total state communication" in table
+
+
+def test_repeat_aggregation_reports_mean_and_sample_std():
+    base = {
+        "model": "5.0b-wide",
+        "method": "muon_fp8_states",
+        "states": "fp8",
+        "status": "ok",
+        "samples": 2,
+        "peak_allocated_bytes": 10,
+        "mean_step_ms": 100.0,
+        "optimizer_ms": 60.0,
+        "newton_schulz_ms": 30.0,
+        "wire_encode_ms": 2.0,
+        "state_all_gather_ms": 10.0,
+        "wire_decode_ms": 3.0,
+        "other_ms": 15.0,
+    }
+    rows = [base, {**base, "mean_step_ms": 104.0, "optimizer_ms": 62.0}]
+
+    result = aggregate_repeats(rows)[0]
+
+    assert result["repeats"] == 2
+    assert result["samples"] == 4
+    assert result["mean_step_ms"] == 102.0
+    assert result["mean_step_ms_std"] == 2.8284
+    assert result["total_state_communication_ms"] == 15.0
 
 
 def test_cloud_launcher_defaults_to_local_transformer_backend():
