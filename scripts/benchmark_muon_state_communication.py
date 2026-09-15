@@ -294,6 +294,17 @@ def parse_output(output: str, warmup_steps: int, measure_steps: int) -> dict:
     return result
 
 
+def _has_complete_samples(
+    row: dict, *, measure_steps: int, external_distributed: bool
+) -> bool:
+    if row["samples"] == measure_steps:
+        return True
+    if not external_distributed:
+        return False
+    profile_steps = {int(profile["step"]) for profile in row.get("_profiles", [])}
+    return len(profile_steps) == measure_steps
+
+
 def run_one(root: Path, args: argparse.Namespace, model: str, method: str) -> dict:
     external_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
     command = build_command(
@@ -381,7 +392,12 @@ def run_one(root: Path, args: argparse.Namespace, model: str, method: str) -> di
         if timed_out
         else (
             "ok"
-            if process.returncode == 0 and row["samples"] == args.measure_steps
+            if process.returncode == 0
+            and _has_complete_samples(
+                row,
+                measure_steps=args.measure_steps,
+                external_distributed=external_distributed,
+            )
             else "error"
         )
     )

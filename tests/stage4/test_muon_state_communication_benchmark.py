@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from scripts import benchmark_muon_state_communication as bench
 from scripts.benchmark_muon_state_communication import (
+    _has_complete_samples,
     aggregate_external,
     build_command,
     parse_output,
@@ -164,3 +165,13 @@ def test_dataset_helper_can_use_torch_bundled_pybind11_headers():
 
     assert "python3 -m pybind11 --includes" in makefile
     assert "torch.__path__[0] + '/include -I'" in makefile
+
+
+def test_pipeline_rank_can_complete_from_optimizer_profiles_without_step_log():
+    row = {
+        "samples": 0,
+        "_profiles": [{"step": 10}, {"step": 11}, {"step": 12}],
+    }
+
+    assert _has_complete_samples(row, measure_steps=3, external_distributed=True)
+    assert not _has_complete_samples(row, measure_steps=3, external_distributed=False)
