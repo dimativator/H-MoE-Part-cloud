@@ -11,6 +11,7 @@ from .memory_efficient.badam import BlockOptimizer, BlockOptimizerRatio
 from .memory_efficient.adam_mini import Adam_mini
 from .memory_efficient.slim_adam import SlimAdamW
 from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFAULT_LAYER_MAP
+from .memory_efficient.fp8_slim_adam import FP8SlimAdamW
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
@@ -844,7 +845,8 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         # Use explicit rules JSON if provided, otherwise fall back to the bundled layer map.
         rules_json = args.slim_adam_rules_json if args.slim_adam_rules_json else None
         layer_map  = None if rules_json else (args.slim_adam_layer_map or SLIM_ADAM_DEFAULT_LAYER_MAP)
-        optimizer = SlimAdamW(
+        optimizer_cls = FP8SlimAdamW if getattr(args, "fp8_optim", False) else SlimAdamW
+        optimizer_kwargs = dict(
             named_parameters=raw_model.named_parameters(),
             lr=args.lr,
             betas=(args.beta1, args.beta2),
@@ -854,6 +856,12 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             layer_map_path=layer_map,
             verbose=args.slim_adam_verbose,
         )
+        if optimizer_cls is FP8SlimAdamW:
+            if qargs is None:
+                raise ValueError("FP8SlimAdamW requires qargs from --fp8-optim.")
+            optimizer = optimizer_cls(qargs=qargs, **optimizer_kwargs)
+        else:
+            optimizer = optimizer_cls(**optimizer_kwargs)
     elif optimizer_name == "adam_mini":
         # Adam-mini takes named_parameters directly and builds its own param groups.
         # This model uses fused c_attn (combined Q/K/V) and c_proj for both attn output
