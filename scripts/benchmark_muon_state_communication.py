@@ -23,6 +23,7 @@ MODELS = {
     "257m": {"layers": 12, "hidden": 1024, "ffn": 2816, "heads": 8},
     "500m": {"layers": 18, "hidden": 1280, "ffn": 3584, "heads": 20},
     "4.9b": {"layers": 32, "hidden": 3456, "ffn": 9216, "heads": 27},
+    "9.9b-pp2": {"layers": 64, "hidden": 3456, "ffn": 9216, "heads": 27},
     "5.0b-wide": {"layers": 14, "hidden": 5120, "ffn": 13824, "heads": 40},
 }
 METHODS = {
@@ -444,6 +445,24 @@ def _public_rows(rows: list[dict]) -> list[dict]:
 
 
 def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
+    for row in rows:
+        optimizer_ms = row.get("optimizer_ms")
+        step_ms = row.get("mean_step_ms")
+        row["outside_optimizer_ms"] = (
+            round(step_ms - optimizer_ms, 4)
+            if step_ms is not None and optimizer_ms is not None
+            else None
+        )
+        communication_phases = (
+            row.get("wire_encode_ms"),
+            row.get("state_all_gather_ms"),
+            row.get("wire_decode_ms"),
+        )
+        row["total_state_communication_ms"] = (
+            round(sum(communication_phases), 4)
+            if all(value is not None for value in communication_phases)
+            else None
+        )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -457,8 +476,8 @@ def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
         writer.writeheader()
         writer.writerows(rows)
     table = [
-        "| Model | Method | States | Step | Newton-Schulz | Wire encode | State all-gather | Wire decode | Other | Peak memory |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Model | Method | States | Step | Outside optimizer | Optimizer | Newton-Schulz | Wire encode | State all-gather | Wire decode | Total state communication | Other | Peak memory |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         method = "FRUGAL Muon-Muon" if row["method"].startswith("frugal") else "Muon"
@@ -478,10 +497,13 @@ def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
                     method,
                     state,
                     timing("mean_step_ms"),
+                    timing("outside_optimizer_ms"),
+                    timing("optimizer_ms"),
                     timing("newton_schulz_ms"),
                     timing("wire_encode_ms"),
                     timing("state_all_gather_ms"),
                     timing("wire_decode_ms"),
+                    timing("total_state_communication_ms"),
                     timing("other_ms"),
                     peak_text,
                 )

@@ -1,5 +1,7 @@
 from pathlib import Path
+from types import SimpleNamespace
 
+from scripts import benchmark_muon_state_communication as bench
 from scripts.benchmark_muon_state_communication import (
     aggregate_external,
     build_command,
@@ -51,6 +53,13 @@ def test_external_mpi_command_does_not_start_nested_torchrun():
 
     assert command[1] == "stage4/pretrain_gpt.py"
     assert "torch.distributed.run" not in command
+
+
+def test_pp2_model_keeps_32_layers_per_pipeline_stage():
+    model = bench.MODELS["9.9b-pp2"]
+
+    assert model["layers"] == 64
+    assert model["layers"] // 2 == bench.MODELS["4.9b"]["layers"]
 
 
 def test_profiles_are_reduced_to_the_slowest_rank_per_step():
@@ -113,3 +122,28 @@ def test_external_rank_results_use_critical_rank_per_step():
     assert result["mean_step_ms"] == 100.0
     assert result["state_all_gather_ms"] == 7.0
     assert result["peak_allocated_bytes"] == 12
+
+
+def test_write_results_adds_requested_derived_timings(tmp_path):
+    args = SimpleNamespace(output_dir=tmp_path)
+    row = {
+        "model": "9.9b-pp2",
+        "method": "muon_fp8_states",
+        "states": "fp8",
+        "mean_step_ms": 100.0,
+        "optimizer_ms": 60.0,
+        "newton_schulz_ms": 30.0,
+        "wire_encode_ms": 2.0,
+        "state_all_gather_ms": 10.0,
+        "wire_decode_ms": 3.0,
+        "other_ms": 15.0,
+        "peak_allocated_bytes": 2**30,
+    }
+
+    bench.write_results(args, [row])
+
+    assert row["outside_optimizer_ms"] == 40.0
+    assert row["total_state_communication_ms"] == 15.0
+    table = (tmp_path / "results.md").read_text()
+    assert "Outside optimizer" in table
+    assert "Total state communication" in table
