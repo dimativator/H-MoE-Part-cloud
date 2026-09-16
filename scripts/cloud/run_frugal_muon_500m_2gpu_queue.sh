@@ -185,6 +185,14 @@ run_smoke() {
     [[ -f "${marker}" ]] && return
     precision_args "${precision}"
     common_args "${experiment}" "${group}" "${exp_dir}/metrics.jsonl"
+    if [[ -s "${exp_dir}/metrics.jsonl" ]]; then
+        for required in main.pt worker_0.pt worker_1.pt; do
+            [[ -f "${exp_dir}/ckpts/latest/${required}" ]] || {
+                echo "Refusing to restart an existing trunk without a complete latest checkpoint: ${exp_dir}/ckpts/latest" >&2
+                exit 12
+            }
+        done
+    fi
     "${TRAIN_LAUNCHER[@]}" src/main.py \
         "${COMMON_ARGS[@]}" "${PRECISION_ARGS[@]}" \
         --scheduler none --warmup-steps 0 --iterations 3 \
