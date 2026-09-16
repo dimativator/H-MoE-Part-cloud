@@ -18,7 +18,7 @@ def checkpoint_iteration(checkpoint_dir: Path, world_size: int) -> int | None:
         return None
     try:
         checkpoint = torch.load(
-            checkpoint_dir / "main.pt",
+            str(checkpoint_dir / "main.pt"),
             map_location="cpu",
             mmap=True,
             weights_only=False,
