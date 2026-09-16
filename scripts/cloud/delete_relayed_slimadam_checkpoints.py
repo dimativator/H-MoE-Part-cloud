@@ -2,7 +2,9 @@
 """Delete only SlimAdam checkpoints already verified on H200 and HF."""
 
 import argparse
+import gc
 import shutil
+import time
 from pathlib import Path
 
 import torch
@@ -33,11 +35,24 @@ def main() -> int:
     root = CHECKPOINT_ROOT.resolve(strict=True)
     validated: list[Path] = []
     for name, expected_iteration in TARGETS.items():
-        target = (root / name).resolve(strict=True)
+        requested_target = root / name
+        if not requested_target.exists():
+            print(f"CHECKPOINT_ALREADY_DELETED path={requested_target}", flush=True)
+            continue
+        target = requested_target.resolve(strict=True)
         if target.parent != root:
             raise RuntimeError(f"Unsafe checkpoint target: {target}")
         missing = [file_name for file_name in EXPECTED_FILES if not (target / file_name).is_file()]
         if missing:
+            residuals = tuple(target.iterdir())
+            if not residuals or all(path.name.startswith(".nfs") for path in residuals):
+                print(
+                    f"CHECKPOINT_PARTIAL_DELETE_RESIDUE path={target} "
+                    f"files={[path.name for path in residuals]}",
+                    flush=True,
+                )
+                validated.append(target)
+                continue
             raise RuntimeError(f"Incomplete checkpoint {target}: missing {missing}")
         checkpoint = torch.load(
             str(target / "main.pt"),
@@ -46,6 +61,8 @@ def main() -> int:
             weights_only=False,
         )
         actual_iteration = int(checkpoint["itr"])
+        del checkpoint
+        gc.collect()
         if actual_iteration != expected_iteration:
             raise RuntimeError(
                 f"Iteration mismatch for {target}: "
@@ -62,13 +79,21 @@ def main() -> int:
         validated.append(target)
 
     for target in validated:
-        shutil.rmtree(target)
+        for attempt in range(5):
+            try:
+                shutil.rmtree(target)
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                gc.collect()
+                time.sleep(2)
         print(f"CHECKPOINT_DELETED path={target}", flush=True)
 
-    remaining = [str(path) for path in validated if path.exists()]
+    remaining = [str(root / name) for name in TARGETS if (root / name).exists()]
     if remaining:
         raise RuntimeError(f"Checkpoint deletion incomplete: {remaining}")
-    print(f"DELETE_COMPLETE root={root} count={len(validated)}", flush=True)
+    print(f"DELETE_COMPLETE root={root} count={len(TARGETS)}", flush=True)
     return 0
 
 
