@@ -12,7 +12,7 @@ fi
 run_prefix=${RUN_ID_PREFIX:-multinode16-$(date +%Y%m%d-%H%M%S)}
 results_root=${RESULTS_ROOT:-/workspace-SR006.nfs3/dimativator/megatron-muon-state-comm}
 run_root=$results_root/$run_prefix
-log_dir=/home/jovyan/hmoe-cloud/logs
+log_dir=$run_root/node-logs
 log=$log_dir/muon-state-comm-${run_prefix}-node${node_rank}.log
 mkdir -p "$log_dir" "$run_root/topology" "$root/runtime-tmp/triton-cache-node${node_rank}"
 exec > >(tee -a "$log") 2>&1
