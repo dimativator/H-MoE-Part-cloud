@@ -42,7 +42,8 @@ if [[ ! -s "${token_file}" ]]; then
 fi
 
 touch "${stop_file}"
-python scripts/cloud/relay_latest_checkpoint_to_hf.py \
+/home/jovyan/hmoe-cloud/torch251-cu121/bin/python \
+    scripts/cloud/relay_latest_checkpoint_to_hf.py \
     --checkpoint-dir "${experiment_dir}/ckpts/latest" \
     --staging-dir "${experiment_dir}/ckpts/.relay" \
     --repo-id DimaTivator/slimadam-257m-cloud-relay-20260915 \
