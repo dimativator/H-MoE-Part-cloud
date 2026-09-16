@@ -35,7 +35,9 @@ def main() -> int:
         "--token-file", default=Path.home() / ".cache/huggingface/token", type=Path
     )
     args = parser.parse_args()
-    token = args.token_file.read_text().strip()
+    token = os.environ.get("HF_TOKEN", "").strip()
+    if not token:
+        token = args.token_file.read_text().strip()
     base_url = f"https://huggingface.co/{args.repo_id}/resolve/main"
     manifest_url = f"{base_url}/manifest.json"
     with request(manifest_url, token) as response:
