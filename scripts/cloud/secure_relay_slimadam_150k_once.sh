@@ -42,13 +42,15 @@ if [[ ! -s "${token_file}" ]]; then
 fi
 
 touch "${stop_file}"
-/home/jovyan/hmoe-cloud/torch251-cu121/bin/python \
-    scripts/cloud/relay_latest_checkpoint_to_hf.py \
-    --checkpoint-dir "${experiment_dir}/ckpts/latest" \
-    --staging-dir "${experiment_dir}/ckpts/.relay" \
-    --repo-id DimaTivator/slimadam-257m-cloud-relay-20260915 \
-    --remote-prefix slimadam_257m_fp8_states_8xC \
-    --world-size 4 \
-    --stop-file "${stop_file}" \
-    --token-file "${token_file}" \
-    --poll-seconds 5
+for checkpoint_name in 35325 70650 141300 latest; do
+    /home/jovyan/hmoe-cloud/torch251-cu121/bin/python \
+        scripts/cloud/relay_latest_checkpoint_to_hf.py \
+        --checkpoint-dir "${experiment_dir}/ckpts/${checkpoint_name}" \
+        --staging-dir "${experiment_dir}/ckpts/.relay_${checkpoint_name}" \
+        --repo-id DimaTivator/slimadam-257m-cloud-relay-20260915 \
+        --remote-prefix slimadam_257m_fp8_states_8xC \
+        --world-size 4 \
+        --stop-file "${stop_file}" \
+        --token-file "${token_file}" \
+        --poll-seconds 5
+done
