@@ -26,6 +26,16 @@ for experiment in "${EXPERIMENTS[@]}"; do
         echo "METRICS_MISSING=${metrics_file}"
     fi
 
+    ckpts_dir="${experiment_dir}/ckpts"
+    if [[ -d "${ckpts_dir}" ]]; then
+        find "${ckpts_dir}" -mindepth 2 -maxdepth 2 \
+            -type f \( -name 'main.pt' -o -name 'worker_0.pt' -o -name 'worker_1.pt' \) \
+            -printf 'CHECKPOINT_FILE=%s %T@ %p\n' \
+            | sort -k4,4 || true
+    else
+        echo "CHECKPOINTS_MISSING=${ckpts_dir}"
+    fi
+
     for checkpoint_file in main.pt worker_0.pt worker_1.pt; do
         checkpoint_path="${experiment_dir}/ckpts/latest/${checkpoint_file}"
         if [[ -f "${checkpoint_path}" ]]; then
