@@ -62,6 +62,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     parser.add_argument("--pipeline-parallel-size", type=int, default=2)
     parser.add_argument("--data-parallel-size", type=int, default=2)
+    parser.add_argument(
+        "--use-tp-pp-dp-mapping",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="place pipeline groups before data-parallel groups in global rank order",
+    )
     parser.add_argument("--sequence-length", type=int, default=1024)
     parser.add_argument(
         "--transformer-impl",
@@ -129,6 +135,7 @@ def build_command(
     update_gap: int,
     fp8_bucket_bytes: int = 64 * 2**20,
     fused_fp8_ns_input: bool = True,
+    use_tp_pp_dp_mapping: bool = False,
     external_distributed: bool = False,
     transformer_impl: str = "transformer_engine",
 ) -> list[str]:
@@ -257,6 +264,8 @@ def build_command(
     ]
     if fused_fp8_ns_input:
         command.append("--muon-fused-fp8-ns-input")
+    if use_tp_pp_dp_mapping:
+        command.append("--use-tp-pp-dp-mapping")
     if transformer_impl == "local":
         command.extend(
             (
@@ -342,6 +351,7 @@ def run_one(
         update_gap=args.update_gap,
         fp8_bucket_bytes=args.fp8_bucket_bytes,
         fused_fp8_ns_input=args.fused_fp8_ns_input,
+        use_tp_pp_dp_mapping=args.use_tp_pp_dp_mapping,
         external_distributed=external_distributed,
         transformer_impl=args.transformer_impl,
     )
@@ -399,6 +409,7 @@ def run_one(
         "optimizer_state_sync": "row_shard_allgather_within_dp_group",
         "model_weight_sharding": "pipeline_parallel",
         "parameter_sync": "replicated_within_dp_group",
+        "rank_mapping": "tp_pp_dp" if args.use_tp_pp_dp_mapping else "tp_dp_pp",
         "sequence_length": args.sequence_length,
         "micro_batch_size": args.micro_batch_size,
         "global_batch_size": args.global_batch_size,
@@ -487,7 +498,12 @@ def aggregate_repeats(rows: list[dict]) -> list[dict]:
         result = dict(repeats[0])
         result["repeats"] = len(repeats)
         result["samples"] = sum(int(row.get("samples", 0)) for row in repeats)
-        for field in (*timing_fields, "outside_optimizer_ms", "total_state_communication_ms"):
+        for field in (
+            *timing_fields,
+            "outside_optimizer_ms",
+            "newton_schulz_pipeline_ms",
+            "total_state_communication_ms",
+        ):
             values = [float(row[field]) for row in repeats if row.get(field) is not None]
             result[field] = _mean(values)
             result[f"{field}_std"] = (
@@ -517,11 +533,13 @@ def _add_derived_timings(row: dict) -> None:
         if step_ms is not None and optimizer_ms is not None
         else None
     )
-    communication_phases = (
-        row.get("wire_encode_ms"),
-        row.get("state_all_gather_ms"),
-        row.get("wire_decode_ms"),
+    ns_phases = (row.get("newton_schulz_ms"), row.get("wire_decode_ms"))
+    row["newton_schulz_pipeline_ms"] = (
+        round(sum(ns_phases), 4)
+        if all(value is not None for value in ns_phases)
+        else None
     )
+    communication_phases = (row.get("wire_encode_ms"), row.get("state_all_gather_ms"))
     row["total_state_communication_ms"] = (
         round(sum(communication_phases), 4)
         if all(value is not None for value in communication_phases)
@@ -545,8 +563,8 @@ def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
         writer.writeheader()
         writer.writerows(rows)
     table = [
-        "| Model | Method | States | Step | Outside optimizer | Optimizer | Newton-Schulz | Wire encode | State all-gather | Wire decode | Total state communication | Other | Peak memory |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Model | Method | States | Step | Outside optimizer | Optimizer | Newton-Schulz incl. preparation | Wire encode | State all-gather | Total state communication | Other | Peak memory |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         method = "FRUGAL Muon-Muon" if row["method"].startswith("frugal") else "Muon"
@@ -575,10 +593,9 @@ def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
                     timing("mean_step_ms"),
                     timing("outside_optimizer_ms"),
                     timing("optimizer_ms"),
-                    timing("newton_schulz_ms"),
+                    timing("newton_schulz_pipeline_ms"),
                     timing("wire_encode_ms"),
                     timing("state_all_gather_ms"),
-                    timing("wire_decode_ms"),
                     timing("total_state_communication_ms"),
                     timing("other_ms"),
                     peak_text,
@@ -589,7 +606,9 @@ def write_results(args: argparse.Namespace, rows: list[dict]) -> None:
     (args.output_dir / "results.md").write_text(
         "# Muon optimizer-state communication\n\n"
         "All times are milliseconds per training step. Phase values use the slowest "
-        "rank for every step and then average over measured steps.\n\n"
+        "rank for every step and then average over measured steps. Newton-Schulz "
+        "includes local FP8 decode and input preparation. Total state communication "
+        "is wire encode plus state all-gather.\n\n"
         + "\n".join(table)
         + "\n"
     )

@@ -59,6 +59,27 @@ def test_external_mpi_command_does_not_start_nested_torchrun():
     assert "torch.distributed.run" not in command
 
 
+def test_tp_pp_dp_mapping_is_forwarded_to_megatron():
+    command = build_command(
+        Path("."),
+        model_name="9.9b-pp2",
+        method="muon_fp8_states",
+        tensor_parallel_size=1,
+        pipeline_parallel_size=2,
+        data_parallel_size=8,
+        sequence_length=1024,
+        micro_batch_size=1,
+        global_batch_size=8,
+        warmup_steps=2,
+        measure_steps=3,
+        density=0.25,
+        update_gap=50,
+        use_tp_pp_dp_mapping=True,
+    )
+
+    assert "--use-tp-pp-dp-mapping" in command
+
+
 def test_pp2_model_keeps_32_layers_per_pipeline_stage():
     model = bench.MODELS["9.9b-pp2"]
 
@@ -147,10 +168,13 @@ def test_write_results_adds_requested_derived_timings(tmp_path):
     bench.write_results(args, [row])
 
     assert row["outside_optimizer_ms"] == 40.0
-    assert row["total_state_communication_ms"] == 15.0
+    assert row["newton_schulz_pipeline_ms"] == 33.0
+    assert row["total_state_communication_ms"] == 12.0
     table = (tmp_path / "results.md").read_text()
     assert "Outside optimizer" in table
+    assert "Newton-Schulz incl. preparation" in table
     assert "Total state communication" in table
+    assert "Wire decode" not in table
 
 
 def test_repeat_aggregation_reports_mean_and_sample_std():
@@ -177,7 +201,8 @@ def test_repeat_aggregation_reports_mean_and_sample_std():
     assert result["samples"] == 4
     assert result["mean_step_ms"] == 102.0
     assert result["mean_step_ms_std"] == 2.8284
-    assert result["total_state_communication_ms"] == 15.0
+    assert result["newton_schulz_pipeline_ms"] == 33.0
+    assert result["total_state_communication_ms"] == 12.0
 
 
 def test_cloud_launcher_defaults_to_local_transformer_backend():
@@ -186,6 +211,18 @@ def test_cloud_launcher_defaults_to_local_transformer_backend():
     assert "transformer_impl=${TRANSFORMER_IMPL:-local}" in launcher
     assert '--transformer-impl "$transformer_impl"' in launcher
     assert 'make -C "$root/third_party/Megatron-LM/megatron/core/datasets"' in launcher
+
+
+def test_16gpu_launcher_uses_two_nodes_and_cross_node_dp_mapping():
+    launcher = Path("cloud_benchmark_muon_state_communication_16gpu.sh").read_text()
+
+    assert 'if [[ "$nnodes" != 2 ]]' in launcher
+    assert "--nnodes=2 --nproc-per-node=8" in launcher
+    assert "--nnodes=2 --nproc-per-node=4" in launcher
+    assert "--data-parallel-size 16" in launcher
+    assert "--pipeline-parallel-size 2 --data-parallel-size 8" in launcher
+    assert "--use-tp-pp-dp-mapping" in launcher
+    assert "benchmark_multinode_collectives.py" in launcher
 
 
 def test_dataset_helper_can_use_torch_bundled_pybind11_headers():
