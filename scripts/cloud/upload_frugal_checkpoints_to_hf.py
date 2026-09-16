@@ -14,7 +14,10 @@ from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 
 RESULTS_ROOT = Path(
-    "/workspace-SR006.nfs3/dimativator/frugal-muon-500m-2gpu-20260912"
+    os.environ.get(
+        "FRUGAL_RESULTS_ROOT",
+        "/workspace-SR006.nfs3/dimativator/frugal-muon-500m-2gpu-20260912",
+    )
 )
 GROUP = "2xChinchilla_500M_frugal_muon_2gpu_cloud"
 EXPERIMENTS = (
