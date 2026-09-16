@@ -55,10 +55,16 @@ def main() -> int:
     parser.add_argument("--remote-prefix", required=True)
     parser.add_argument("--world-size", type=int, required=True)
     parser.add_argument("--stop-file", type=Path, required=True)
+    parser.add_argument("--token-file", type=Path)
     parser.add_argument("--poll-seconds", type=int, default=30)
     args = parser.parse_args()
 
-    api = HfApi()
+    token = None
+    if args.token_file is not None:
+        token = args.token_file.read_text().strip()
+        if not token:
+            raise RuntimeError("Hugging Face token file is empty")
+    api = HfApi(token=token)
     api.create_repo(args.repo_id, repo_type="model", private=True, exist_ok=True)
     args.staging_dir.mkdir(parents=True, exist_ok=True)
     uploaded = set()
