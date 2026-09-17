@@ -12,6 +12,7 @@ RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/frugal-rho-257m-1xc
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LATEST_CKPT_INTERVAL=${LATEST_CKPT_INTERVAL:-5000}
 SAVE_CHECKPOINTS=${SAVE_CHECKPOINTS:-1}
+ARCHIVE_INCOMPLETE=${ARCHIVE_INCOMPLETE:-0}
 RUN_SEED=${SEED:-0}
 
 case "${RESULTS_DIR}" in
@@ -44,6 +45,10 @@ esac
 case "${SAVE_CHECKPOINTS}" in
     0|1) ;;
     *) echo "SAVE_CHECKPOINTS must be 0 or 1" >&2; exit 2 ;;
+esac
+case "${ARCHIVE_INCOMPLETE}" in
+    0|1) ;;
+    *) echo "ARCHIVE_INCOMPLETE must be 0 or 1" >&2; exit 2 ;;
 esac
 
 mkdir -p "${RESULTS_DIR}/logs" "${EVAL_CACHE_DIR}"
@@ -91,6 +96,20 @@ remove_checkpoint_tree() {
     rm -rf -- "${target}"
 }
 
+archive_incomplete_experiment() {
+    local target=$1
+    local stamp
+    [[ "${MODE}" == "full" && "${ARCHIVE_INCOMPLETE}" == "1" ]] || return
+    [[ -f "${target}/metrics.jsonl" ]] || return
+    case "${target}" in
+        "${RESULTS_DIR}/"*) ;;
+        *) echo "Refusing unsafe incomplete-run archive: ${target}" >&2; exit 12 ;;
+    esac
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    mv -- "${target}" "${target}.interrupted.${stamp}"
+    echo "ARCHIVED_INCOMPLETE=${target}.interrupted.${stamp}"
+}
+
 run_rho() {
     local rho=$1
     local suffix=${rho/./p}
@@ -125,6 +144,8 @@ run_rho() {
     elif [[ "${SAVE_CHECKPOINTS}" == "0" ]]; then
         save_args=(--no-local-save)
     fi
+
+    archive_incomplete_experiment "${exp_dir}"
 
     echo "RUN_START queue=${QUEUE_ID} rho=${rho} experiment=${experiment}"
     "${TORCHRUN_BIN}" --standalone --nproc_per_node=1 src/main.py \
