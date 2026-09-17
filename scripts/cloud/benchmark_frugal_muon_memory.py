@@ -103,7 +103,32 @@ def precision_flags(precision: str) -> list[str]:
     raise ValueError(f"Unknown precision: {precision}")
 
 
-def command_for(args: argparse.Namespace, model: str, precision: str, batch_size: int) -> list[str]:
+def prepare_dataset_view(source: Path, views_root: Path, batch_size: int) -> Path:
+    """Expose the same packed blocks with metadata matching a benchmark batch."""
+    view = views_root / f"bs{batch_size}"
+    view.mkdir(parents=True, exist_ok=True)
+    for source_path in source.iterdir():
+        if source_path.name == "packed_metadata.json":
+            continue
+        view_path = view / source_path.name
+        if not view_path.exists():
+            view_path.symlink_to(source_path, target_is_directory=source_path.is_dir())
+
+    metadata = json.loads((source / "packed_metadata.json").read_text())
+    metadata["batch_size"] = batch_size
+    temporary = view / "packed_metadata.json.tmp"
+    temporary.write_text(json.dumps(metadata, indent=2) + "\n")
+    temporary.replace(view / "packed_metadata.json")
+    return view
+
+
+def command_for(
+    args: argparse.Namespace,
+    model: str,
+    precision: str,
+    batch_size: int,
+    datasets_dir: Path | None = None,
+) -> list[str]:
     shape = MODELS[model]
     experiment = f"memory_{model.lower()}_frugal_muon_{precision}_bs{batch_size}"
     command = [
@@ -117,7 +142,7 @@ def command_for(args: argparse.Namespace, model: str, precision: str, batch_size
         "--seed", "0",
         "--data-seed", "1337",
         "--dataset", "fineweb",
-        "--datasets-dir", str(args.datasets_dir),
+        "--datasets-dir", str(datasets_dir or args.datasets_dir),
         "--fineweb-replay-world-size", "2",
         "--fineweb-replay-layout", "serial",
         "--eval-cache-dir", str(args.eval_cache_dir),
@@ -203,6 +228,7 @@ def main() -> int:
     args.eval_cache_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = args.output_dir / "logs"
     logs_dir.mkdir(exist_ok=True)
+    views_root = args.output_dir / "dataset_views"
     csv_path = args.output_dir / "results.csv"
     state_path = args.output_dir / "state.json"
 
@@ -240,7 +266,12 @@ def main() -> int:
                     continue
 
                 gpu_name, used_before, free_before = gpu_snapshot()
-                command = command_for(args, model, precision, batch_size)
+                datasets_dir = prepare_dataset_view(
+                    args.datasets_dir, views_root, batch_size
+                )
+                command = command_for(
+                    args, model, precision, batch_size, datasets_dir=datasets_dir
+                )
                 log_path = logs_dir / f"{model}_FRUGAL_Muon_Muon_{precision}_bs{batch_size}.log"
                 write_state(
                     state_path,
