@@ -17,11 +17,25 @@ from pathlib import Path
 MODELS = {
     "257m": {"layers": 12, "hidden": 1024, "ffn": 2816, "heads": 8},
     "500m": {"layers": 18, "hidden": 1280, "ffn": 3584, "heads": 20},
+    "1b": {"layers": 16, "hidden": 2048, "ffn": 5504, "heads": 16},
+    "3b": {"layers": 24, "hidden": 3072, "ffn": 8192, "heads": 24},
+    "5b": {"layers": 32, "hidden": 3456, "ffn": 9216, "heads": 27},
 }
 PRECISIONS = ("bf16", "fp8_act", "full_fp8")
-OPTIMIZERS = ("adam", "ademamix", "muon", "soap")
-DEFAULT_BATCHES = (2, 4, 8, 16, 32, 64)
-SUPPORTED_BATCHES = (*DEFAULT_BATCHES, 128)
+OPTIMIZERS = (
+    "adam",
+    "muon",
+    "soap",
+    "ademamix",
+    "galore",
+    "frugal",
+    "frugal_muon_muon",
+    "slim_adam",
+    "apollo",
+)
+DEFAULT_BATCHES = (1, 2, 4, 8, 16, 32)
+SUPPORTED_BATCHES = (*DEFAULT_BATCHES, 64, 128)
+PERIODIC_OPTIMIZERS = {"soap", "galore", "frugal", "frugal_muon_muon", "apollo"}
 ITERATION_RE = re.compile(
     r"iteration\s+(\d+)/\s*\d+.*elapsed time per iteration \(ms\):\s*([0-9.]+)"
 )
@@ -62,6 +76,16 @@ def batch_layout(global_batch, micro_batch_cap, data_parallel_size):
     return micro_batch, per_rank_batch // micro_batch
 
 
+def periodic_updates_in_window(warmup_steps, measure_steps, update_gap):
+    """Count zero-based periodic updates inside the measured optimizer steps."""
+    first_measured_step = warmup_steps + 1
+    last_measured_step = warmup_steps + measure_steps
+    return sum(
+        (step - 1) % update_gap == 0
+        for step in range(first_measured_step, last_measured_step + 1)
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", default="257m,500m")
@@ -75,8 +99,11 @@ def parse_args():
         help="cap the micro batch and use gradient accumulation for larger global batches",
     )
     parser.add_argument("--data-parallel-size", type=int, default=1)
+    parser.add_argument("--pipeline-parallel-size", type=int, default=1)
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--measure-steps", type=int, default=50)
+    parser.add_argument("--periodic-update-gap", type=int, default=50)
+    parser.add_argument("--projection-density", type=float, default=0.25)
     parser.add_argument("--muon-use-syrk", action="store_true")
     parser.add_argument("--muon-batched-newton-schulz", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=3600)
@@ -97,6 +124,12 @@ def parse_args():
         parser.error("micro batch size must be positive")
     if args.data_parallel_size < 1:
         parser.error("data parallel size must be positive")
+    if args.pipeline_parallel_size < 1:
+        parser.error("pipeline parallel size must be positive")
+    if args.periodic_update_gap < 1:
+        parser.error("periodic update gap must be positive")
+    if not 0.0 < args.projection_density <= 1.0:
+        parser.error("projection density must be in (0, 1]")
     if args.muon_use_syrk and args.muon_batched_newton_schulz:
         parser.error("--muon-use-syrk and --muon-batched-newton-schulz are mutually exclusive")
     for batch in args.batches:
@@ -145,16 +178,20 @@ def build_command(
     measured,
     muon_use_syrk=False,
     muon_batched_newton_schulz=False,
+    pipeline_parallel_size=1,
+    periodic_update_gap=50,
+    projection_density=0.25,
 ):
     model = MODELS[model_name]
     total_steps = warmup + measured
+    world_size = data_parallel_size * pipeline_parallel_size
     command = [
         sys.executable,
         "-m",
         "torch.distributed.run",
         "--standalone",
         "--nproc-per-node",
-        str(data_parallel_size),
+        str(world_size),
         "stage4/pretrain_gpt.py",
         "--optimizer-state-precision",
         "fp8" if precision == "full_fp8" else "fp32",
@@ -190,7 +227,7 @@ def build_command(
         "--tensor-model-parallel-size",
         "1",
         "--pipeline-model-parallel-size",
-        "1",
+        str(pipeline_parallel_size),
         "--no-gradient-accumulation-fusion",
         "--bf16",
         "--transformer-impl",
@@ -215,6 +252,12 @@ def build_command(
         "5",
         "--muon-fp32-matmul-prec",
         "medium",
+        "--frugal-density",
+        str(projection_density),
+        "--frugal-update-gap",
+        str(periodic_update_gap),
+        "--soap-precondition-frequency",
+        str(periodic_update_gap),
         "--lr",
         "1e-3",
         "--min-lr",
@@ -293,6 +336,10 @@ def write_summary(output_dir, results, metadata):
         "micro_batch_size",
         "gradient_accumulation_steps",
         "data_parallel_size",
+        "pipeline_parallel_size",
+        "world_size",
+        "periodic_update_gap",
+        "periodic_updates_in_measurement",
         "status",
         "mean_step_ms",
         "median_step_ms",
@@ -322,6 +369,7 @@ def result_key(result):
         result["batch_size"],
         result.get("micro_batch_size", result["batch_size"]),
         result.get("data_parallel_size", 1),
+        result.get("pipeline_parallel_size", 1),
     )
 
 
@@ -342,6 +390,8 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         stem += f"_mb{micro_batch}"
     if args.data_parallel_size != 1:
         stem += f"_dp{args.data_parallel_size}"
+    if args.pipeline_parallel_size != 1:
+        stem += f"_pp{args.pipeline_parallel_size}"
     log_path = output_dir / "logs" / f"{stem}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = build_command(
@@ -356,6 +406,9 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         args.measure_steps,
         args.muon_use_syrk,
         args.muon_batched_newton_schulz,
+        args.pipeline_parallel_size,
+        args.periodic_update_gap,
+        args.projection_density,
     )
     env = os.environ.copy()
     source_paths = [
@@ -408,6 +461,20 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         "micro_batch_size": micro_batch,
         "gradient_accumulation_steps": accumulation_steps,
         "data_parallel_size": args.data_parallel_size,
+        "pipeline_parallel_size": args.pipeline_parallel_size,
+        "world_size": args.data_parallel_size * args.pipeline_parallel_size,
+        "periodic_update_gap": (
+            args.periodic_update_gap if optimizer in PERIODIC_OPTIMIZERS else None
+        ),
+        "periodic_updates_in_measurement": (
+            periodic_updates_in_window(
+                args.warmup_steps,
+                args.measure_steps,
+                args.periodic_update_gap,
+            )
+            if optimizer in PERIODIC_OPTIMIZERS
+            else 0
+        ),
         "return_code": return_code,
         "wall_time_seconds": round(time.monotonic() - started, 3),
         "parameter_count": int(parameter_matches[-1]) if parameter_matches else None,
@@ -456,6 +523,10 @@ def main():
             "sequence_length": 1024,
             "micro_batch_size_cap": args.micro_batch_size,
             "data_parallel_size": args.data_parallel_size,
+            "pipeline_parallel_size": args.pipeline_parallel_size,
+            "world_size": args.data_parallel_size * args.pipeline_parallel_size,
+            "periodic_update_gap": args.periodic_update_gap,
+            "projection_density": args.projection_density,
             "muon_use_syrk": args.muon_use_syrk,
             "muon_batched_newton_schulz": args.muon_batched_newton_schulz,
             "git_commit": subprocess.check_output(
@@ -479,6 +550,7 @@ def main():
                         batch,
                         micro_batch,
                         args.data_parallel_size,
+                        args.pipeline_parallel_size,
                     )
                     if oom_micro_batch is not None and micro_batch > oom_micro_batch:
                         result = {
@@ -489,6 +561,8 @@ def main():
                             "micro_batch_size": micro_batch,
                             "gradient_accumulation_steps": accumulation_steps,
                             "data_parallel_size": args.data_parallel_size,
+                            "pipeline_parallel_size": args.pipeline_parallel_size,
+                            "world_size": args.data_parallel_size * args.pipeline_parallel_size,
                             "status": "skipped_after_oom",
                             "samples": 0,
                             "message": "micro batch is larger than the first OOM micro batch",
@@ -504,6 +578,7 @@ def main():
                             f"global_batch={batch} micro_batch={micro_batch} "
                             f"accumulation_steps={accumulation_steps} "
                             f"data_parallel_size={args.data_parallel_size}",
+                            f"pipeline_parallel_size={args.pipeline_parallel_size}",
                             flush=True,
                         )
                         result = run_one(
@@ -514,6 +589,7 @@ def main():
                             f"global_batch={batch} micro_batch={micro_batch} "
                             f"accumulation_steps={accumulation_steps} "
                             f"data_parallel_size={args.data_parallel_size} "
+                            f"pipeline_parallel_size={args.pipeline_parallel_size} "
                             f"status={result['status']} "
                             f"mean_step_ms={result.get('mean_step_ms')}",
                             flush=True,

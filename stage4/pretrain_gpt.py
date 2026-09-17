@@ -28,6 +28,14 @@ import megatron.core.optimizer.emerging_optimizers as mcore_eopt
 import megatron.training.arguments as mcore_arguments
 import megatron.core.optimizer.optimizer as mcore_optimizer_base
 from stage4.ademamix import AdEMAMix
+from stage4.benchmark_optimizers import (
+    ApolloAdamW,
+    FrugalAdamW,
+    GaLoreAdamW,
+    SlimAdamW,
+    no_op_state_init,
+)
+from stage4.project_soap import SOAP as ProjectSOAP
 from stage4.state_sharded_muon import FrugalMuonMuon, StateShardedMuon
 
 
@@ -48,6 +56,76 @@ mcore_eopt._EMERGING_OPTIMIZERS["ademamix"] = mcore_eopt.EmergingOptimizerEntry(
     optimizer_cls=AdEMAMix,
     config_to_kwargs=_ademamix_config_to_kwargs,
     default_param_overrides={},
+)
+
+
+def _projection_config_to_kwargs(config, model_chunks, pg_collection):
+    del pg_collection
+    hidden_size = model_chunks[0].config.hidden_size
+    return {
+        "lr": config.lr,
+        "betas": (config.adam_beta1, config.adam_beta2),
+        "eps": config.adam_eps,
+        "weight_decay": config.weight_decay,
+        "rank": max(1, round(config.frugal_density * hidden_size)),
+        "update_gap": config.frugal_update_gap,
+    }
+
+
+def _frugal_config_to_kwargs(config, model_chunks, pg_collection):
+    del model_chunks, pg_collection
+    return {
+        "lr": config.lr,
+        "betas": (config.adam_beta1, config.adam_beta2),
+        "eps": config.adam_eps,
+        "weight_decay": config.weight_decay,
+        "density": config.frugal_density,
+        "update_gap": config.frugal_update_gap,
+        "inactive_lr_scale": config.frugal_inactive_lr_scale,
+    }
+
+
+def _slim_adam_config_to_kwargs(config, model_chunks, pg_collection):
+    del model_chunks, pg_collection
+    return {
+        "lr": config.lr,
+        "betas": (config.adam_beta1, config.adam_beta2),
+        "eps": config.adam_eps,
+        "weight_decay": config.weight_decay,
+    }
+
+
+matrix_only_overrides = mcore_eopt._default_param_overrides_factory()
+mcore_eopt._EMERGING_OPTIMIZERS["galore"] = mcore_eopt.EmergingOptimizerEntry(
+    optimizer_cls=GaLoreAdamW,
+    init_state_fn=no_op_state_init,
+    config_to_kwargs=_projection_config_to_kwargs,
+    default_param_overrides=matrix_only_overrides,
+)
+mcore_eopt._EMERGING_OPTIMIZERS["apollo"] = mcore_eopt.EmergingOptimizerEntry(
+    optimizer_cls=ApolloAdamW,
+    init_state_fn=no_op_state_init,
+    config_to_kwargs=_projection_config_to_kwargs,
+    default_param_overrides=matrix_only_overrides,
+)
+mcore_eopt._EMERGING_OPTIMIZERS["frugal"] = mcore_eopt.EmergingOptimizerEntry(
+    optimizer_cls=FrugalAdamW,
+    init_state_fn=no_op_state_init,
+    config_to_kwargs=_frugal_config_to_kwargs,
+    default_param_overrides=matrix_only_overrides,
+)
+mcore_eopt._EMERGING_OPTIMIZERS["slim_adam"] = mcore_eopt.EmergingOptimizerEntry(
+    optimizer_cls=SlimAdamW,
+    init_state_fn=no_op_state_init,
+    config_to_kwargs=_slim_adam_config_to_kwargs,
+    default_param_overrides={
+        mcore_eopt.ParamKey(
+            name=("*linear_qkv.weight", "*word_embeddings.weight", "*output_layer.weight")
+        ): {"slim_compress_dims": (1,)},
+        mcore_eopt.ParamKey(
+            name=("*linear_proj.weight", "*linear_fc1.weight", "*linear_fc2.weight")
+        ): {"slim_compress_dims": (0,)},
+    },
 )
 
 
@@ -122,34 +200,48 @@ def _profiled_chained_step(self):
 mcore_optimizer_base.ChainedOptimizer.__init__ = _profiled_chained_init
 mcore_optimizer_base.ChainedOptimizer._step = _profiled_chained_step
 
-# MCore registers SOAP through the generic fallback path, which leaves three gaps.
-# Without the param overrides the tied 50,304x1,536 embedding is handed to SOAP,
-# whose Kronecker factor and eigenbasis for that parameter are both 50,304x50,304
-# (~10 GB each); SOAP's `eps` has no OptimizerConfig field, so `--adam-eps` never
-# reaches it; and the three `soap_*` config fields have no command-line flags.
+# Use the SOAP implementation from the project's existing experiments.  In
+# particular, axes larger than 10,000 do not get a Kronecker factor.  The
+# upstream MCore implementation has no such bound and is not comparable on the
+# 3B and 5B models used by this benchmark.
 
 
 def _soap_config_to_kwargs(config, model_chunks, pg_collection):
-    kwargs = mcore_eopt._default_adam_based_eopt_config_to_kwargs(
-        "soap", config, model_chunks, pg_collection
-    )
-    kwargs["eps"] = config.adam_eps
-    return kwargs
+    del model_chunks, pg_collection
+    return {
+        "lr": config.lr,
+        "betas": (config.adam_beta1, config.adam_beta2),
+        "shampoo_beta": config.soap_shampoo_beta,
+        "eps": config.adam_eps,
+        "weight_decay": config.weight_decay,
+        "precondition_frequency": config.soap_precondition_frequency,
+        "max_precond_dim": 10000,
+        "precondition_embed_debed": True,
+    }
 
 
 soap_entry = mcore_eopt._EMERGING_OPTIMIZERS["soap"]
+soap_entry.optimizer_cls = ProjectSOAP
+soap_entry.init_state_fn = no_op_state_init
 soap_entry.config_to_kwargs = _soap_config_to_kwargs
-soap_entry.default_param_overrides = mcore_eopt._default_param_overrides_factory()
+soap_entry.default_param_overrides = {}
 
 
 def add_stage4_args(parser):
     for action in parser._actions:
         if action.dest == "optimizer":
-            for optimizer in ("ademamix", "frugal_muon_muon"):
+            for optimizer in (
+                "ademamix",
+                "apollo",
+                "frugal",
+                "frugal_muon_muon",
+                "galore",
+                "slim_adam",
+            ):
                 if optimizer not in action.choices:
                     action.choices = [*action.choices, optimizer]
     group = parser.add_argument_group(title="stage4 soap")
-    group.add_argument("--soap-shampoo-beta", type=float, default=0.95)
+    group.add_argument("--soap-shampoo-beta", type=float, default=0.99)
     group.add_argument("--soap-precondition-frequency", type=int, default=1)
     group.add_argument(
         "--soap-use-kl-shampoo", action=argparse.BooleanOptionalAction, default=True
