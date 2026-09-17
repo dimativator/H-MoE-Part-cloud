@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/frugal-muon-memory-cloud-20260917}
+PRINT_ALL=${PRINT_ALL:-0}
+echo "RESULTS_DIR=${RESULTS_DIR}"
+if [[ -f "${RESULTS_DIR}/state.json" ]]; then
+    echo "STATE=$(tr -d '\n' < "${RESULTS_DIR}/state.json")"
+else
+    echo "STATE_MISSING"
+fi
+if [[ -f "${RESULTS_DIR}/results.csv" ]]; then
+    python - "${RESULTS_DIR}/results.csv" "${PRINT_ALL}" <<'PY'
+import csv
+import json
+import sys
+
+with open(sys.argv[1], newline="") as handle:
+    rows = list(csv.DictReader(handle))
+print(f"ROWS={len(rows)}")
+selected = rows if sys.argv[2] == "1" else rows[-12:]
+for row in selected:
+    print("ROW=" + json.dumps(row, sort_keys=True))
+PY
+else
+    echo "RESULTS_MISSING"
+fi
+if [[ -f "${RESULTS_DIR}/runner-full.log" ]]; then
+    tail -n 20 "${RESULTS_DIR}/runner-full.log" | sed 's/^/RUNNER_TAIL=/'
+fi
