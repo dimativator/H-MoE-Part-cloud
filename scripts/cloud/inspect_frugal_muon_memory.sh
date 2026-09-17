@@ -28,3 +28,11 @@ fi
 if [[ -f "${RESULTS_DIR}/runner-full.log" ]]; then
     tail -n 20 "${RESULTS_DIR}/runner-full.log" | sed 's/^/RUNNER_TAIL=/'
 fi
+if [[ -d "${RESULTS_DIR}/logs" ]]; then
+    latest_log=$(find "${RESULTS_DIR}/logs" -type f -name '*.log' -print0 \
+        | xargs -0 ls -1t 2>/dev/null | head -n 1 || true)
+    if [[ -n "${latest_log}" ]]; then
+        echo "LATEST_CELL_LOG=${latest_log}"
+        tail -n 120 "${latest_log}" | sed 's/^/CELL_TAIL=/'
+    fi
+fi
