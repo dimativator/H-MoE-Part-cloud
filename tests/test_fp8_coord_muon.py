@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from optim.memory_efficient.frugal import FP8CoordMuon
 from optim.multi_optimizer import MultiOptimizer
 from optim.optimization import get_optimizer
+from third_party.lite.muonlite import MuonLite
 
 
 def qargs():
@@ -44,6 +45,10 @@ def optimizer_args(fp8_optim=False):
         weight_decay=0.1,
         beta1=0.9,
         beta2=0.99,
+        lite_ns_steps=6,
+        lite_muon_theta=0.95,
+        iterations=10,
+        warmup_steps=0,
     )
 
 
@@ -74,6 +79,34 @@ class FP8CoordMuonTest(unittest.TestCase):
         self.assertIsInstance(optimizer.non_proj_opt, torch.optim.AdamW)
         self.assertIs(optimizer.proj_opt.param_groups[0]["params"][0], matrix)
         self.assertIs(optimizer.non_proj_opt.param_groups[0]["params"][0], embedding)
+
+    def test_coord_muon_can_match_muon_adamw_fallback(self):
+        class TinyModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.proj = torch.nn.Linear(8, 8, bias=False)
+                self.embed_tokens = torch.nn.Embedding(8, 8)
+
+        model = TinyModel()
+        groups = [
+            {"params": [model.proj.weight], "is_proj_params": True},
+            {
+                "params": [model.embed_tokens.weight],
+                "is_proj_params": False,
+                "weight_decay": 0.0,
+            },
+        ]
+        args = optimizer_args()
+        args.non_proj_opt = "muon_adamw"
+        optimizer = get_optimizer(groups, args, model=model, qargs=None)
+
+        self.assertIsInstance(optimizer, MultiOptimizer)
+        self.assertIsInstance(optimizer.non_proj_opt, MuonLite)
+        state = optimizer.non_proj_opt.state[model.embed_tokens.weight]
+        self.assertEqual(state["name"], "embed_tokens.weight")
+        self.assertEqual(state["use_muon"], 0)
+        self.assertEqual(state["subspace_ratio"], 0.0)
+        self.assertEqual(state["lr_ratio"], 1.0)
 
 
 if __name__ == "__main__":

@@ -396,11 +396,12 @@ def parse_args(base_parser, args, namespace):
         "--non_proj_opt",
         type=str,
         default="adamw",
-        choices=["adamw", "muon", "sign_sgd", "sgd"],
+        choices=["adamw", "muon_adamw", "muon", "sign_sgd", "sgd"],
         help=(
             "Optimizer for non-projection params (embeddings, layer norms, lm_head) "
             "in FRUGAL optimizers (coord_muon, galore_muon, block_muon, coord_adamw, "
             "galore_adamw, block_adamw, and similar).  Default: adamw (existing behaviour). "
+            "Use muon_adamw to match the custom AdamW fallback used by --opt muon. "
             "When set to something other than adamw, a MultiOptimizer wrapper is used so "
             "that proj and non-proj params are trained by separate optimizers."
         ),
