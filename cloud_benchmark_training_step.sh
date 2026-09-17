@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -u
 
+if [[ ${OMPI_COMM_WORLD_RANK:-0} != 0 ]]; then
+    exit 0
+fi
+
 root=$(cd "$(dirname "$0")" && pwd)
 output_dir=${BENCHMARK_OUTPUT_DIR:-/home/jovyan/hmoe-cloud/step-time}
 log_dir=/home/jovyan/hmoe-cloud/logs
