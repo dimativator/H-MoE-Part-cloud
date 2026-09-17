@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -eu
 
-output_dir=${BENCHMARK_OUTPUT_DIR:?BENCHMARK_OUTPUT_DIR must point to a benchmark run}
+output_root=${BENCHMARK_OUTPUT_DIR:?BENCHMARK_OUTPUT_DIR must point to a benchmark run or suite}
 
-if [[ -f "$output_dir/results.csv" ]]; then
-    cat "$output_dir/results.csv"
-fi
+while IFS= read -r results; do
+    echo "=== $results ==="
+    cat "$results"
+done < <(find "$output_root" -name results.csv -type f -print | sort)
 
-for log in "$output_dir"/logs/*.log; do
-    [[ -f "$log" ]] || continue
+while IFS= read -r log; do
     if grep -qE 'Traceback|ChildFailedError|ERROR|Error' "$log"; then
         echo "=== $log ==="
         tail -n 160 "$log"
     fi
-done
+done < <(find "$output_root" -path '*/logs/*.log' -type f -print | sort)
