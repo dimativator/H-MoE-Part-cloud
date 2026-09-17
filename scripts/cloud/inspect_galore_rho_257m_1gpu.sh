@@ -2,6 +2,7 @@
 set -euo pipefail
 
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-wsd-20260914}
+METRIC_TAIL_LINES=${METRIC_TAIL_LINES:-250}
 echo "INSPECT_ROOT=${RESULTS_DIR}"
 
 if [[ ! -d "${RESULTS_DIR}" ]]; then
@@ -11,7 +12,7 @@ fi
 
 while IFS= read -r metrics_file; do
     echo "METRICS_FILE=${metrics_file}"
-    tail -n 10000 "${metrics_file}" | sed 's/^/METRIC_JSON=/'
+    tail -n "${METRIC_TAIL_LINES}" "${metrics_file}" | sed 's/^/METRIC_JSON=/'
 done < <(find "${RESULTS_DIR}" -type f -name metrics.jsonl -print | sort)
 
 echo "MARKERS"
