@@ -5,6 +5,7 @@ set -euo pipefail
 # In this codebase rho is the retained subspace fraction (`--density`).
 
 QUEUE_ID=${QUEUE_ID:-A}
+RHO_LIST=${RHO_LIST:-}
 MODE=${MODE:-full}
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs2/dimativator/galore-rho-257m-1xc-wsd-20260914}
@@ -21,13 +22,23 @@ case "${RESULTS_DIR}" in
         exit 2
         ;;
 esac
-case "${QUEUE_ID}" in
-    A) RHOS=(0.8 0.6 0.4 0.2 0.1) ;;
-    B) RHOS=(0.7 0.5 0.3 0.15) ;;
-    C) RHOS=(1.0) ;;
-    D) RHOS=(0.9) ;;
-    *) echo "QUEUE_ID must be A, B, C, or D" >&2; exit 2 ;;
-esac
+if [[ -n "${RHO_LIST}" ]]; then
+    read -r -a RHOS <<< "${RHO_LIST}"
+else
+    case "${QUEUE_ID}" in
+        A) RHOS=(0.8 0.6 0.4 0.2 0.1) ;;
+        B) RHOS=(0.7 0.5 0.3 0.15) ;;
+        C) RHOS=(1.0) ;;
+        D) RHOS=(0.9) ;;
+        *) echo "QUEUE_ID must be A, B, C, or D" >&2; exit 2 ;;
+    esac
+fi
+for rho in "${RHOS[@]}"; do
+    if [[ ! "${rho}" =~ ^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$ ]]; then
+        echo "Each RHO_LIST value must be in (0, 1]: ${rho}" >&2
+        exit 2
+    fi
+done
 case "${MODE}" in
     smoke|full) ;;
     *) echo "MODE must be smoke or full" >&2; exit 2 ;;
@@ -41,7 +52,7 @@ mkdir -p "${RESULTS_DIR}/logs" "${EVAL_CACHE_DIR}"
 QUEUE_LOG="${RESULTS_DIR}/logs/queue_${QUEUE_ID}_${MODE}.log"
 exec > >(tee -a "${QUEUE_LOG}") 2>&1
 
-echo "QUEUE_ID=${QUEUE_ID} MODE=${MODE}"
+echo "QUEUE_ID=${QUEUE_ID} MODE=${MODE} RHOS=${RHOS[*]}"
 echo "DATASETS_DIR=${DATASETS_DIR} RESULTS_DIR=${RESULTS_DIR}"
 echo "HOST=$(hostname) DATE=$(date --iso-8601=seconds)"
 nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv
