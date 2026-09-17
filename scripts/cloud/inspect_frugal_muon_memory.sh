@@ -6,9 +6,9 @@ PRINT_ALL=${PRINT_ALL:-0}
 EXPORT_BASE64=${EXPORT_BASE64:-0}
 echo "RESULTS_DIR=${RESULTS_DIR}"
 if [[ "${EXPORT_BASE64}" == "1" ]]; then
-    echo "CSV_BASE64_BEGIN"
-    base64 "${RESULTS_DIR}/results.csv"
-    echo "CSV_BASE64_END"
+    echo "CSV_GZIP_BASE64_BEGIN"
+    gzip -c "${RESULTS_DIR}/results.csv" | base64
+    echo "CSV_GZIP_BASE64_END"
     exit 0
 fi
 if [[ -f "${RESULTS_DIR}/state.json" ]]; then
