@@ -3,6 +3,7 @@ set -euo pipefail
 
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/frugal-muon-memory-cloud-20260917}
 PRINT_ALL=${PRINT_ALL:-0}
+EXPORT_BASE64=${EXPORT_BASE64:-0}
 echo "RESULTS_DIR=${RESULTS_DIR}"
 if [[ -f "${RESULTS_DIR}/state.json" ]]; then
     echo "STATE=$(tr -d '\n' < "${RESULTS_DIR}/state.json")"
@@ -22,6 +23,11 @@ selected = rows if sys.argv[2] == "1" else rows[-12:]
 for row in selected:
     print("ROW=" + json.dumps(row, sort_keys=True))
 PY
+    if [[ "${EXPORT_BASE64}" == "1" ]]; then
+        echo "CSV_BASE64_BEGIN"
+        base64 "${RESULTS_DIR}/results.csv"
+        echo "CSV_BASE64_END"
+    fi
 else
     echo "RESULTS_MISSING"
 fi
