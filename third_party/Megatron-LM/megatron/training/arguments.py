@@ -2572,7 +2572,8 @@ def _add_training_args(parser):
                        'https://arxiv.org/abs/2205.14135')
     group.add_argument('--optimizer', type=str, default='adam',
                        choices=['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap',
-                                'adaptive_muon', 'ademamix', 'frugal_muon_muon'],
+                                'adaptive_muon', 'ademamix', 'apollo', 'frugal',
+                                'frugal_muon_muon', 'galore', 'slim_adam'],
                        help='Optimizer function. '
                             'Note: dist_muon is deprecated; use --optimizer muon '
                             'with --use-distributed-optimizer instead.')
