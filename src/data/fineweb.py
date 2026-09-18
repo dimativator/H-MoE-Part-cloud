@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -38,6 +39,12 @@ def _resolve_dataset_root(datasets_dir: str) -> Path:
             f"No direct-child parquet shards found under {dataset_root}."
         )
     return dataset_root
+
+
+def _load_manifest(path: str) -> Manifest:
+    manifest_path = Path(path).expanduser()
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        return Manifest.from_dict(json.load(handle))
 
 
 class FineWebValReader:
@@ -252,8 +259,14 @@ def build_fineweb_readers(
 
         return build_packed_fineweb_readers(args, rank=rank, world_size=world_size)
 
-    dataset_root = _resolve_dataset_root(args.datasets_dir)
-    manifest = build_manifest(dataset_root)
+    fineweb_manifest = getattr(args, "fineweb_manifest", None)
+    if fineweb_manifest:
+        manifest = _load_manifest(fineweb_manifest)
+        dataset_description = manifest.dataset_root
+    else:
+        dataset_root = _resolve_dataset_root(args.datasets_dir)
+        manifest = build_manifest(dataset_root)
+        dataset_description = str(dataset_root)
     block_tokens = args.sequence_length + 1
     val_sequences = args.eval_batches * args.eval_batch_size
 
@@ -357,7 +370,7 @@ def build_fineweb_readers(
         )
 
     if verbose and rank == 0:
-        print(f"Using FineWeb parquet dataset at {dataset_root}")
+        print(f"Using FineWeb parquet dataset at {dataset_description}")
         print(
             f"FineWeb manifest: {len(manifest.shards)} shards, "
             f"{manifest.total_row_groups} row groups"

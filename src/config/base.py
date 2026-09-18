@@ -182,6 +182,15 @@ def parse_args(base_parser, args, namespace):
     # Dataset
     parser.add_argument("--datasets-dir", type=str, default="./datasets/")
     parser.add_argument(
+        "--fineweb-manifest",
+        type=str,
+        default=None,
+        help=(
+            "Optional FineWeb manifest JSON. When set, parquet shards may be "
+            "read from the local or HTTP(S) dataset_root recorded in the manifest."
+        ),
+    )
+    parser.add_argument(
         "--fineweb-replay-world-size",
         default=1,
         type=int,
