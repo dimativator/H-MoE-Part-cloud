@@ -13,7 +13,7 @@ fi
 while IFS= read -r metrics_file; do
     echo "METRICS_FILE=${metrics_file}"
     tail -n "${METRIC_TAIL_LINES}" "${metrics_file}" | sed 's/^/METRIC_JSON=/'
-done < <(find "${RESULTS_DIR}" -mindepth 2 -maxdepth 2 -type f -name metrics.jsonl -print | sort)
+done < <(find "${RESULTS_DIR}" -mindepth 3 -maxdepth 3 -type f -name metrics.jsonl -print | sort)
 
 echo "MARKERS"
 find "${RESULTS_DIR}" -maxdepth 1 -type f -name '.llama257M_galore_rho*.done' -print | sort
