@@ -76,6 +76,42 @@ def test_muon_syrk_flag_is_forwarded_only_when_enabled():
     assert optimized.count("--muon-use-syrk") == 1
 
 
+def test_bf16_muon_can_use_fp8_states_without_fp8_activations():
+    command = build_command(
+        root=Path("."),
+        model_name="500m",
+        precision="bf16",
+        optimizer="muon",
+        global_batch=1,
+        micro_batch=1,
+        data_parallel_size=1,
+        warmup=2,
+        measured=2,
+        muon_state_precision="fp8",
+    )
+
+    assert command[command.index("--optimizer-state-precision") + 1] == "fp8"
+    assert "--fp8-format" not in command
+
+
+def test_muon_state_precision_does_not_change_non_muon_optimizers():
+    command = build_command(
+        root=Path("."),
+        model_name="500m",
+        precision="bf16",
+        optimizer="adam",
+        global_batch=1,
+        micro_batch=1,
+        data_parallel_size=1,
+        warmup=2,
+        measured=2,
+        muon_state_precision="fp8",
+    )
+
+    assert command[command.index("--optimizer-state-precision") + 1] == "fp32"
+    assert "--fp8-format" not in command
+
+
 def test_muon_syrk_flag_is_not_forwarded_to_other_optimizers():
     command = build_command(
         root=Path("."),

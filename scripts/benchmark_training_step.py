@@ -33,6 +33,7 @@ OPTIMIZERS = (
     "slim_adam",
     "apollo",
 )
+MUON_OPTIMIZERS = {"muon", "frugal_muon_muon"}
 DEFAULT_BATCHES = (1, 2, 4, 8, 16, 32)
 SUPPORTED_BATCHES = (*DEFAULT_BATCHES, 64, 128)
 PERIODIC_OPTIMIZERS = {"soap", "galore", "frugal", "frugal_muon_muon", "apollo"}
@@ -104,6 +105,12 @@ def parse_args():
     parser.add_argument("--measure-steps", type=int, default=50)
     parser.add_argument("--periodic-update-gap", type=int, default=50)
     parser.add_argument("--projection-density", type=float, default=0.25)
+    parser.add_argument(
+        "--muon-state-precision",
+        choices=("bfloat16", "fp8"),
+        default="bfloat16",
+        help="persistent Muon momentum precision, independent of activation precision",
+    )
     parser.add_argument("--muon-use-syrk", action="store_true")
     parser.add_argument("--muon-batched-newton-schulz", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=3600)
@@ -181,6 +188,7 @@ def build_command(
     pipeline_parallel_size=1,
     periodic_update_gap=50,
     projection_density=0.25,
+    muon_state_precision="bfloat16",
 ):
     model = MODELS[model_name]
     total_steps = warmup + measured
@@ -194,7 +202,12 @@ def build_command(
         str(world_size),
         "stage4/pretrain_gpt.py",
         "--optimizer-state-precision",
-        "fp8" if precision == "full_fp8" else "fp32",
+        (
+            "fp8"
+            if precision == "full_fp8"
+            or (optimizer in MUON_OPTIMIZERS and muon_state_precision == "fp8")
+            else "fp32"
+        ),
         "--num-layers",
         str(model["layers"]),
         "--hidden-size",
@@ -332,6 +345,7 @@ def write_summary(output_dir, results, metadata):
         "model",
         "precision",
         "optimizer",
+        "muon_state_precision",
         "batch_size",
         "micro_batch_size",
         "gradient_accumulation_steps",
@@ -366,6 +380,15 @@ def result_key(result):
         result["model"],
         result["precision"],
         result["optimizer"],
+        result.get(
+            "muon_state_precision",
+            "fp8"
+            if result["precision"] == "full_fp8"
+            and result["optimizer"] in MUON_OPTIMIZERS
+            else "bfloat16"
+            if result["optimizer"] in MUON_OPTIMIZERS
+            else None,
+        ),
         result["batch_size"],
         result.get("micro_batch_size", result["batch_size"]),
         result.get("data_parallel_size", 1),
@@ -386,6 +409,16 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         batch, args.micro_batch_size, args.data_parallel_size
     )
     stem = f"{model}_{precision}_{optimizer}_bs{batch}"
+    effective_muon_state_precision = (
+        "fp8"
+        if optimizer in MUON_OPTIMIZERS
+        and (precision == "full_fp8" or args.muon_state_precision == "fp8")
+        else "bfloat16"
+        if optimizer in MUON_OPTIMIZERS
+        else None
+    )
+    if effective_muon_state_precision == "fp8" and precision != "full_fp8":
+        stem += "_states_fp8"
     if micro_batch != batch:
         stem += f"_mb{micro_batch}"
     if args.data_parallel_size != 1:
@@ -409,6 +442,7 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         args.pipeline_parallel_size,
         args.periodic_update_gap,
         args.projection_density,
+        args.muon_state_precision,
     )
     env = os.environ.copy()
     source_paths = [
@@ -457,6 +491,7 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         "model": model,
         "precision": precision,
         "optimizer": optimizer,
+        "muon_state_precision": effective_muon_state_precision,
         "batch_size": batch,
         "micro_batch_size": micro_batch,
         "gradient_accumulation_steps": accumulation_steps,
@@ -529,6 +564,7 @@ def main():
             "projection_density": args.projection_density,
             "muon_use_syrk": args.muon_use_syrk,
             "muon_batched_newton_schulz": args.muon_batched_newton_schulz,
+            "muon_state_precision": args.muon_state_precision,
             "git_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=root, text=True
             ).strip(),
@@ -547,6 +583,17 @@ def main():
                         model,
                         precision,
                         optimizer,
+                        (
+                            "fp8"
+                            if optimizer in MUON_OPTIMIZERS
+                            and (
+                                precision == "full_fp8"
+                                or args.muon_state_precision == "fp8"
+                            )
+                            else "bfloat16"
+                            if optimizer in MUON_OPTIMIZERS
+                            else None
+                        ),
                         batch,
                         micro_batch,
                         args.data_parallel_size,
@@ -557,6 +604,17 @@ def main():
                             "model": model,
                             "precision": precision,
                             "optimizer": optimizer,
+                            "muon_state_precision": (
+                                "fp8"
+                                if optimizer in MUON_OPTIMIZERS
+                                and (
+                                    precision == "full_fp8"
+                                    or args.muon_state_precision == "fp8"
+                                )
+                                else "bfloat16"
+                                if optimizer in MUON_OPTIMIZERS
+                                else None
+                            ),
                             "batch_size": batch,
                             "micro_batch_size": micro_batch,
                             "gradient_accumulation_steps": accumulation_steps,
