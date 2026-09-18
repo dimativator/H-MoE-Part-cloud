@@ -4,8 +4,8 @@ set -euo pipefail
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/frugal-muon-500m-2gpu-20260912}
 GROUP=2xChinchilla_500M_frugal_muon_2gpu_cloud
 EXPERIMENTS=(
-    llama500M_frugal_muon_adamw_bf16_2xC_2gpu
-    llama500M_frugal_muon_adamw_fp8_full_2xC_2gpu
+    llama500M_frugal_muon_adamw_fp8_act_2xC_2gpu
+    llama500M_frugal_muon_adamw_bf16_fp8_states_2xC_2gpu
 )
 
 echo "INSPECT_ROOT=${RESULTS_DIR}"
