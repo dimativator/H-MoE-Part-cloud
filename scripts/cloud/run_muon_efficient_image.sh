@@ -32,6 +32,8 @@ FULL_WARMUP_STEPS=${WARMUP_STEPS:-2000}
 FULL_ACC_STEPS=${ACC_STEPS:-}
 FULL_ITERATIONS=${ITERATIONS:-75457}
 HORIZON_TAG=${HORIZON_TAG:-1xChinchilla}
+ENABLE_WANDB=${ENABLE_WANDB:-1}
+METRICS_JSONL=${METRICS_JSONL:-}
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/exps}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LOG_DIR=${LOG_DIR:-/workspace-SR006.nfs3/dimativator/logs/optimizer_fp8_cloud}
@@ -255,7 +257,8 @@ elif [[ "${MODE}" == "full" ]]; then
         echo "Required smoke marker is missing: ${SMOKE_MARKER}" >&2
         exit 6
     fi
-    "${PYTHON_BIN}" - <<'PY'
+    if [[ "${ENABLE_WANDB}" == "1" ]]; then
+        "${PYTHON_BIN}" - <<'PY'
 import os
 
 import wandb
@@ -265,6 +268,7 @@ viewer = wandb.Api(timeout=30).viewer
 assert viewer, "W&B authentication returned an empty viewer"
 print("WANDB_AUTH=ok")
 PY
+    fi
     ITERATIONS=${FULL_ITERATIONS}
     WARMUP_STEPS=${FULL_WARMUP_STEPS}
     if [[ -n "${FULL_ACC_STEPS}" ]]; then
@@ -310,11 +314,18 @@ PY
         --lm-eval-interval 2000
         --lm-eval-datasets wikitext103
         "${CHECKPOINT_ARGS[@]}"
-        --wandb
-        --wandb-project "${WANDB_PROJECT}"
-        --wandb-group "${WANDB_GROUP}"
-        --wandb-tags fineweb optimizer_fp8 bf16_model "${HORIZON_TAG}" 0.5B "${NPROC_PER_NODE}gpu" cloudru h100 "${OPTIMIZER}" "seed${RUN_SEED}" torch291 efficient-image h200-data-parity
     )
+    if [[ -n "${METRICS_JSONL}" ]]; then
+        EXTRA_ARGS+=(--metrics-jsonl "${METRICS_JSONL}")
+    fi
+    if [[ "${ENABLE_WANDB}" == "1" ]]; then
+        EXTRA_ARGS+=(
+            --wandb
+            --wandb-project "${WANDB_PROJECT}"
+            --wandb-group "${WANDB_GROUP}"
+            --wandb-tags fineweb optimizer_fp8 bf16_model "${HORIZON_TAG}" 0.5B "${NPROC_PER_NODE}gpu" cloudru h100 "${OPTIMIZER}" "seed${RUN_SEED}" torch291 efficient-image h200-data-parity
+        )
+    fi
 else
     echo "Unsupported MODE=${MODE}" >&2
     exit 2
