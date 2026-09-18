@@ -30,6 +30,8 @@ FINEWEB_REPLAY_LAYOUT=${FINEWEB_REPLAY_LAYOUT:-concat}
 RUN_SEED=${SEED:-0}
 FULL_WARMUP_STEPS=${WARMUP_STEPS:-2000}
 FULL_ACC_STEPS=${ACC_STEPS:-}
+FULL_ITERATIONS=${ITERATIONS:-75457}
+HORIZON_TAG=${HORIZON_TAG:-1xChinchilla}
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/exps}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 LOG_DIR=${LOG_DIR:-/workspace-SR006.nfs3/dimativator/logs/optimizer_fp8_cloud}
@@ -263,7 +265,7 @@ viewer = wandb.Api(timeout=30).viewer
 assert viewer, "W&B authentication returned an empty viewer"
 print("WANDB_AUTH=ok")
 PY
-    ITERATIONS=75457
+    ITERATIONS=${FULL_ITERATIONS}
     WARMUP_STEPS=${FULL_WARMUP_STEPS}
     if [[ -n "${FULL_ACC_STEPS}" ]]; then
         ACC_STEPS=${FULL_ACC_STEPS}
@@ -311,7 +313,7 @@ PY
         --wandb
         --wandb-project "${WANDB_PROJECT}"
         --wandb-group "${WANDB_GROUP}"
-        --wandb-tags fineweb optimizer_fp8 bf16_model 1xChinchilla 0.5B "${NPROC_PER_NODE}gpu" cloudru h100 "${OPTIMIZER}" "seed${RUN_SEED}" torch291 efficient-image h200-data-parity
+        --wandb-tags fineweb optimizer_fp8 bf16_model "${HORIZON_TAG}" 0.5B "${NPROC_PER_NODE}gpu" cloudru h100 "${OPTIMIZER}" "seed${RUN_SEED}" torch291 efficient-image h200-data-parity
     )
 else
     echo "Unsupported MODE=${MODE}" >&2
