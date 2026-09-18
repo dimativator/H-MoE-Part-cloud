@@ -65,7 +65,7 @@ def main() -> int:
                 raise RuntimeError(f"SHA256 mismatch for {name}")
 
         checkpoint = torch.load(
-            source_dir / "main.pt",
+            str(source_dir / "main.pt"),
             map_location="cpu",
             mmap=True,
             weights_only=False,
