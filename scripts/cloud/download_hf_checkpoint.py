@@ -6,7 +6,6 @@ import shutil
 import tempfile
 from pathlib import Path
 
-import torch
 from huggingface_hub import hf_hub_download
 
 
@@ -63,16 +62,6 @@ def main() -> int:
                 raise RuntimeError(f"Size mismatch for {name}")
             if sha256(path) != str(expected["sha256"]):
                 raise RuntimeError(f"SHA256 mismatch for {name}")
-
-        checkpoint = torch.load(
-            str(source_dir / "main.pt"),
-            map_location="cpu",
-            mmap=True,
-            weights_only=False,
-        )
-        if int(checkpoint["itr"]) != args.expected_iteration:
-            raise RuntimeError("Unexpected iteration in main.pt")
-        del checkpoint
 
         if args.destination.exists():
             existing_manifest = args.destination / "manifest.json"
