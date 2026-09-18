@@ -25,6 +25,7 @@ PRECISIONS = ("bf16", "fp8_act", "full_fp8")
 OPTIMIZERS = (
     "adam",
     "muon",
+    "muon_fp8_states",
     "soap",
     "ademamix",
     "galore",
@@ -33,7 +34,7 @@ OPTIMIZERS = (
     "slim_adam",
     "apollo",
 )
-MUON_OPTIMIZERS = {"muon", "frugal_muon_muon"}
+MUON_OPTIMIZERS = {"muon", "muon_fp8_states", "frugal_muon_muon"}
 DEFAULT_BATCHES = (1, 2, 4, 8, 16, 32)
 SUPPORTED_BATCHES = (*DEFAULT_BATCHES, 64, 128)
 PERIODIC_OPTIMIZERS = {"soap", "galore", "frugal", "frugal_muon_muon", "apollo"}
@@ -77,6 +78,33 @@ def batch_layout(global_batch, micro_batch_cap, data_parallel_size):
     return micro_batch, per_rank_batch // micro_batch
 
 
+def micro_batch_candidates(global_batch, micro_batch_cap, data_parallel_size):
+    if global_batch % data_parallel_size != 0:
+        raise ValueError(
+            f"global batch {global_batch} must be divisible by data parallel size "
+            f"{data_parallel_size}"
+        )
+    per_rank_batch = global_batch // data_parallel_size
+    maximum = min(per_rank_batch, micro_batch_cap or per_rank_batch)
+    return [
+        micro_batch
+        for micro_batch in range(maximum, 0, -1)
+        if per_rank_batch % micro_batch == 0
+    ]
+
+
+def runtime_optimizer(optimizer):
+    return "muon" if optimizer == "muon_fp8_states" else optimizer
+
+
+def effective_muon_state_precision(precision, optimizer, requested):
+    if optimizer not in MUON_OPTIMIZERS:
+        return None
+    if precision == "full_fp8" or optimizer == "muon_fp8_states":
+        return "fp8"
+    return requested
+
+
 def periodic_updates_in_window(warmup_steps, measure_steps, update_gap):
     """Count zero-based periodic updates inside the measured optimizer steps."""
     first_measured_step = warmup_steps + 1
@@ -98,6 +126,11 @@ def parse_args():
         type=int,
         default=None,
         help="cap the micro batch and use gradient accumulation for larger global batches",
+    )
+    parser.add_argument(
+        "--adaptive-micro-batch",
+        action="store_true",
+        help="fall back after OOM and use the largest fitting micro batch per optimizer",
     )
     parser.add_argument("--data-parallel-size", type=int, default=1)
     parser.add_argument("--pipeline-parallel-size", type=int, default=1)
@@ -193,6 +226,10 @@ def build_command(
     model = MODELS[model_name]
     total_steps = warmup + measured
     world_size = data_parallel_size * pipeline_parallel_size
+    optimizer_state_precision = effective_muon_state_precision(
+        precision, optimizer, muon_state_precision
+    )
+    command_optimizer = runtime_optimizer(optimizer)
     command = [
         sys.executable,
         "-m",
@@ -204,8 +241,7 @@ def build_command(
         "--optimizer-state-precision",
         (
             "fp8"
-            if precision == "full_fp8"
-            or (optimizer in MUON_OPTIMIZERS and muon_state_precision == "fp8")
+            if precision == "full_fp8" or optimizer_state_precision == "fp8"
             else "fp32"
         ),
         "--num-layers",
@@ -246,11 +282,11 @@ def build_command(
         "--transformer-impl",
         "transformer_engine",
         "--optimizer",
-        optimizer,
+        command_optimizer,
         "--adam-beta1",
         "0.9",
         "--adam-beta2",
-        "0.999" if optimizer == "ademamix" else "0.99",
+        "0.999" if command_optimizer == "ademamix" else "0.99",
         "--adam-eps",
         "1e-8",
         "--muon-momentum",
@@ -324,9 +360,9 @@ def build_command(
                 "most_recent",
             ]
         )
-    if optimizer == "muon" and muon_use_syrk:
+    if command_optimizer == "muon" and muon_use_syrk:
         command.append("--muon-use-syrk")
-    if optimizer == "muon" and muon_batched_newton_schulz:
+    if command_optimizer == "muon" and muon_batched_newton_schulz:
         command.append("--muon-batched-newton-schulz")
     return command
 
@@ -346,6 +382,7 @@ def write_summary(output_dir, results, metadata):
         "precision",
         "optimizer",
         "muon_state_precision",
+        "adaptive_probe",
         "batch_size",
         "micro_batch_size",
         "gradient_accumulation_steps",
@@ -404,20 +441,27 @@ def load_previous(output_dir):
     return payload.get("results", []), payload.get("metadata", {})
 
 
-def run_one(root, output_dir, args, model, precision, optimizer, batch):
-    micro_batch, accumulation_steps = batch_layout(
-        batch, args.micro_batch_size, args.data_parallel_size
-    )
+def run_one(
+    root, output_dir, args, model, precision, optimizer, batch, micro_batch=None
+):
+    if micro_batch is None:
+        micro_batch, accumulation_steps = batch_layout(
+            batch, args.micro_batch_size, args.data_parallel_size
+        )
+    else:
+        per_rank_batch = batch // args.data_parallel_size
+        if batch % args.data_parallel_size != 0 or per_rank_batch % micro_batch != 0:
+            raise ValueError("micro batch must divide the per-rank global batch")
+        accumulation_steps = per_rank_batch // micro_batch
     stem = f"{model}_{precision}_{optimizer}_bs{batch}"
-    effective_muon_state_precision = (
-        "fp8"
-        if optimizer in MUON_OPTIMIZERS
-        and (precision == "full_fp8" or args.muon_state_precision == "fp8")
-        else "bfloat16"
-        if optimizer in MUON_OPTIMIZERS
-        else None
+    state_precision = effective_muon_state_precision(
+        precision, optimizer, args.muon_state_precision
     )
-    if effective_muon_state_precision == "fp8" and precision != "full_fp8":
+    if (
+        state_precision == "fp8"
+        and precision != "full_fp8"
+        and optimizer != "muon_fp8_states"
+    ):
         stem += "_states_fp8"
     if micro_batch != batch:
         stem += f"_mb{micro_batch}"
@@ -491,7 +535,8 @@ def run_one(root, output_dir, args, model, precision, optimizer, batch):
         "model": model,
         "precision": precision,
         "optimizer": optimizer,
-        "muon_state_precision": effective_muon_state_precision,
+        "muon_state_precision": state_precision,
+        "adaptive_probe": False,
         "batch_size": batch,
         "micro_batch_size": micro_batch,
         "gradient_accumulation_steps": accumulation_steps,
@@ -557,6 +602,7 @@ def main():
             "measure_steps": args.measure_steps,
             "sequence_length": 1024,
             "micro_batch_size_cap": args.micro_batch_size,
+            "adaptive_micro_batch": args.adaptive_micro_batch,
             "data_parallel_size": args.data_parallel_size,
             "pipeline_parallel_size": args.pipeline_parallel_size,
             "world_size": args.data_parallel_size * args.pipeline_parallel_size,
@@ -575,46 +621,49 @@ def main():
         for precision in args.precisions:
             for optimizer in args.optimizers:
                 oom_micro_batch = None
+                state_precision = effective_muon_state_precision(
+                    precision, optimizer, args.muon_state_precision
+                )
                 for batch in args.batches:
-                    micro_batch, accumulation_steps = batch_layout(
-                        batch, args.micro_batch_size, args.data_parallel_size
+                    candidates = (
+                        micro_batch_candidates(
+                            batch, args.micro_batch_size, args.data_parallel_size
+                        )
+                        if args.adaptive_micro_batch
+                        else [
+                            batch_layout(
+                                batch,
+                                args.micro_batch_size,
+                                args.data_parallel_size,
+                            )[0]
+                        ]
                     )
-                    key = (
-                        model,
-                        precision,
-                        optimizer,
-                        (
-                            "fp8"
-                            if optimizer in MUON_OPTIMIZERS
-                            and (
-                                precision == "full_fp8"
-                                or args.muon_state_precision == "fp8"
-                            )
-                            else "bfloat16"
-                            if optimizer in MUON_OPTIMIZERS
-                            else None
-                        ),
-                        batch,
-                        micro_batch,
-                        args.data_parallel_size,
-                        args.pipeline_parallel_size,
-                    )
-                    if oom_micro_batch is not None and micro_batch > oom_micro_batch:
+                    if oom_micro_batch is not None:
+                        candidates = [
+                            candidate
+                            for candidate in candidates
+                            if candidate < oom_micro_batch
+                        ]
+                    if not candidates:
+                        per_rank_batch = batch // args.data_parallel_size
+                        micro_batch = 1
+                        accumulation_steps = per_rank_batch
+                        key = (
+                            model,
+                            precision,
+                            optimizer,
+                            state_precision,
+                            batch,
+                            micro_batch,
+                            args.data_parallel_size,
+                            args.pipeline_parallel_size,
+                        )
                         result = {
                             "model": model,
                             "precision": precision,
                             "optimizer": optimizer,
-                            "muon_state_precision": (
-                                "fp8"
-                                if optimizer in MUON_OPTIMIZERS
-                                and (
-                                    precision == "full_fp8"
-                                    or args.muon_state_precision == "fp8"
-                                )
-                                else "bfloat16"
-                                if optimizer in MUON_OPTIMIZERS
-                                else None
-                            ),
+                            "muon_state_precision": state_precision,
+                            "adaptive_probe": False,
                             "batch_size": batch,
                             "micro_batch_size": micro_batch,
                             "gradient_accumulation_steps": accumulation_steps,
@@ -623,43 +672,82 @@ def main():
                             "world_size": args.data_parallel_size * args.pipeline_parallel_size,
                             "status": "skipped_after_oom",
                             "samples": 0,
-                            "message": "micro batch is larger than the first OOM micro batch",
+                            "message": "micro batch 1 already OOM",
                         }
-                    elif key in results_by_key and not args.rerun:
-                        print(f"SKIP {key}: already recorded", flush=True)
-                        if results_by_key[key]["status"] == "oom":
-                            oom_micro_batch = micro_batch
+                        results_by_key[key] = result
+                        write_summary(
+                            args.output_dir,
+                            sorted(results_by_key.values(), key=result_key),
+                            metadata,
+                        )
                         continue
-                    else:
-                        print(
-                            f"RUN model={model} precision={precision} optimizer={optimizer} "
-                            f"global_batch={batch} micro_batch={micro_batch} "
-                            f"accumulation_steps={accumulation_steps} "
-                            f"data_parallel_size={args.data_parallel_size}",
-                            f"pipeline_parallel_size={args.pipeline_parallel_size}",
-                            flush=True,
+
+                    for candidate_index, micro_batch in enumerate(candidates):
+                        per_rank_batch = batch // args.data_parallel_size
+                        accumulation_steps = per_rank_batch // micro_batch
+                        key = (
+                            model,
+                            precision,
+                            optimizer,
+                            state_precision,
+                            batch,
+                            micro_batch,
+                            args.data_parallel_size,
+                            args.pipeline_parallel_size,
                         )
-                        result = run_one(
-                            root, args.output_dir, args, model, precision, optimizer, batch
-                        )
-                        print(
-                            f"RESULT model={model} precision={precision} optimizer={optimizer} "
-                            f"global_batch={batch} micro_batch={micro_batch} "
-                            f"accumulation_steps={accumulation_steps} "
-                            f"data_parallel_size={args.data_parallel_size} "
-                            f"pipeline_parallel_size={args.pipeline_parallel_size} "
-                            f"status={result['status']} "
-                            f"mean_step_ms={result.get('mean_step_ms')}",
-                            flush=True,
-                        )
+                        if key in results_by_key and not args.rerun:
+                            result = results_by_key[key]
+                            print(f"SKIP {key}: already recorded", flush=True)
+                        else:
+                            print(
+                                f"RUN model={model} precision={precision} "
+                                f"optimizer={optimizer} global_batch={batch} "
+                                f"micro_batch={micro_batch} "
+                                f"accumulation_steps={accumulation_steps} "
+                                f"data_parallel_size={args.data_parallel_size} "
+                                f"pipeline_parallel_size={args.pipeline_parallel_size}",
+                                flush=True,
+                            )
+                            result = run_one(
+                                root,
+                                args.output_dir,
+                                args,
+                                model,
+                                precision,
+                                optimizer,
+                                batch,
+                                micro_batch,
+                            )
+                            print(
+                                f"RESULT model={model} precision={precision} "
+                                f"optimizer={optimizer} global_batch={batch} "
+                                f"micro_batch={micro_batch} "
+                                f"accumulation_steps={accumulation_steps} "
+                                f"data_parallel_size={args.data_parallel_size} "
+                                f"pipeline_parallel_size={args.pipeline_parallel_size} "
+                                f"status={result['status']} "
+                                f"mean_step_ms={result.get('mean_step_ms')}",
+                                flush=True,
+                            )
                         if result["status"] == "oom":
-                            oom_micro_batch = micro_batch
-                    results_by_key[key] = result
-                    write_summary(
-                        args.output_dir,
-                        sorted(results_by_key.values(), key=result_key),
-                        metadata,
-                    )
+                            oom_micro_batch = (
+                                micro_batch
+                                if oom_micro_batch is None
+                                else min(oom_micro_batch, micro_batch)
+                            )
+                            result["adaptive_probe"] = (
+                                args.adaptive_micro_batch
+                                and candidate_index < len(candidates) - 1
+                            )
+                        results_by_key[key] = result
+                        write_summary(
+                            args.output_dir,
+                            sorted(results_by_key.values(), key=result_key),
+                            metadata,
+                        )
+                        if result["status"] == "oom" and args.adaptive_micro_batch:
+                            continue
+                        break
 
     results = sorted(results_by_key.values(), key=result_key)
     write_summary(args.output_dir, results, metadata)

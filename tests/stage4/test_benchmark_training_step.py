@@ -4,6 +4,7 @@ from scripts.benchmark_training_step import (
     MODELS,
     OPTIMIZERS,
     build_command,
+    micro_batch_candidates,
     periodic_updates_in_window,
 )
 
@@ -19,6 +20,7 @@ def test_benchmark_matrix_contains_requested_models_and_optimizers():
     assert set(OPTIMIZERS) == {
         "adam",
         "muon",
+        "muon_fp8_states",
         "soap",
         "ademamix",
         "galore",
@@ -31,6 +33,11 @@ def test_benchmark_matrix_contains_requested_models_and_optimizers():
 
 def test_measurement_window_contains_one_gap_50_update():
     assert periodic_updates_in_window(10, 50, 50) == 1
+
+
+def test_adaptive_micro_batch_candidates_are_largest_first_divisors():
+    assert micro_batch_candidates(32, 32, 1) == [32, 16, 8, 4, 2, 1]
+    assert micro_batch_candidates(32, 4, 1) == [4, 2, 1]
 
 
 def test_pipeline_parallelism_sets_world_size_and_periodic_flags():
@@ -90,6 +97,24 @@ def test_bf16_muon_can_use_fp8_states_without_fp8_activations():
         muon_state_precision="fp8",
     )
 
+    assert command[command.index("--optimizer-state-precision") + 1] == "fp8"
+    assert "--fp8-format" not in command
+
+
+def test_bf16_muon_fp8_states_variant_uses_muon_with_fp8_states():
+    command = build_command(
+        root=Path("."),
+        model_name="500m",
+        precision="bf16",
+        optimizer="muon_fp8_states",
+        global_batch=1,
+        micro_batch=1,
+        data_parallel_size=1,
+        warmup=2,
+        measured=2,
+    )
+
+    assert command[command.index("--optimizer") + 1] == "muon"
     assert command[command.index("--optimizer-state-precision") + 1] == "fp8"
     assert "--fp8-format" not in command
 
