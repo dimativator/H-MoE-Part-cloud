@@ -1,3 +1,5 @@
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -223,6 +225,37 @@ def test_16gpu_launcher_uses_two_nodes_and_cross_node_dp_mapping():
     assert "--pipeline-parallel-size 2 --data-parallel-size 8" in launcher
     assert "--use-tp-pp-dp-mapping" in launcher
     assert "benchmark_multinode_collectives.py" in launcher
+
+
+def test_16gpu_launcher_resolves_two_nodes_from_sixteen_mpi_ranks():
+    script = Path("cloud_benchmark_muon_state_communication_16gpu.sh")
+    layouts = (
+        (0, 0, 0, 1),
+        (7, 7, 0, 0),
+        (8, 0, 1, 1),
+        (15, 7, 1, 0),
+    )
+    for world_rank, local_rank, node_rank, leader in layouts:
+        env = os.environ | {
+            "OMPI_COMM_WORLD_RANK": str(world_rank),
+            "OMPI_COMM_WORLD_LOCAL_RANK": str(local_rank),
+            "OMPI_COMM_WORLD_SIZE": "16",
+            "OMPI_COMM_WORLD_LOCAL_SIZE": "8",
+            "MLSUB_LAYOUT_ONLY": "1",
+        }
+        result = subprocess.run(
+            ["bash", str(script)],
+            check=False,
+            capture_output=True,
+            env=env,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == (
+            f"world_rank={world_rank} local_rank={local_rank} world_size=16 "
+            f"local_size=8 node_rank={node_rank} nnodes=2 leader={leader}"
+        )
 
 
 def test_dataset_helper_can_use_torch_bundled_pybind11_headers():

@@ -2,18 +2,43 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")" && pwd)
-node_rank=${OMPI_COMM_WORLD_RANK:?16-GPU launch requires an MPI worker rank}
-nnodes=${OMPI_COMM_WORLD_SIZE:?16-GPU launch requires an MPI worker world size}
+world_rank=${OMPI_COMM_WORLD_RANK:?16-GPU launch requires an MPI world rank}
+local_rank=${OMPI_COMM_WORLD_LOCAL_RANK:?16-GPU launch requires an MPI local rank}
+world_size=${OMPI_COMM_WORLD_SIZE:?16-GPU launch requires an MPI world size}
+local_size=${OMPI_COMM_WORLD_LOCAL_SIZE:?16-GPU launch requires an MPI local size}
+if (( local_size < 1 || world_size % local_size != 0 )); then
+    echo "invalid MPI layout: world_size=$world_size local_size=$local_size" >&2
+    exit 8
+fi
+nnodes=$((world_size / local_size))
+node_rank=$((world_rank / local_size))
+leader=0
+if (( local_rank == 0 )); then
+    leader=1
+fi
 if [[ "$nnodes" != 2 ]]; then
     echo "expected two mlsub workers, got $nnodes" >&2
     exit 8
+fi
+if [[ "$world_size" != 16 || "$local_size" != 8 ]]; then
+    echo "expected 2x8 MPI ranks, got world_size=$world_size local_size=$local_size" >&2
+    exit 8
+fi
+
+if [[ ${MLSUB_LAYOUT_ONLY:-0} == 1 ]]; then
+    echo "world_rank=$world_rank local_rank=$local_rank world_size=$world_size local_size=$local_size node_rank=$node_rank nnodes=$nnodes leader=$leader"
+    exit 0
 fi
 
 run_prefix=${RUN_ID_PREFIX:-multinode16-$(date +%Y%m%d-%H%M%S)}
 results_root=${RESULTS_ROOT:-/workspace-SR006.nfs3/dimativator/megatron-muon-state-comm}
 run_root=$results_root/$run_prefix
 log_dir=$run_root/node-logs
-log=$log_dir/muon-state-comm-${run_prefix}-node${node_rank}.log
+if (( leader )); then
+    log=$log_dir/muon-state-comm-${run_prefix}-node${node_rank}.log
+else
+    log=$log_dir/muon-state-comm-${run_prefix}-mpi-rank${world_rank}.log
+fi
 mkdir -p "$log_dir" "$run_root/topology" "$root/runtime-tmp/triton-cache-node${node_rank}"
 exec > >(tee -a "$log") 2>&1
 
@@ -31,6 +56,9 @@ fi
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="$root/third_party/Megatron-LM:$root/third_party/emerging-optimizers:$root"
 export TRITON_CACHE_DIR="$root/runtime-tmp/triton-cache-node${node_rank}"
+if (( leader )); then
+    export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+fi
 
 master_addr=$(python - <<'PY'
 import socket
@@ -56,30 +84,38 @@ PY
 run_checked() {
     local phase=$1
     shift
-    echo "=== START ${phase} node=${node_rank} host=$(hostname) ==="
-    set +e
-    "$@"
-    local code=$?
-    set -e
+    local code=0
+    if (( leader )); then
+        echo "=== START ${phase} node=${node_rank} host=$(hostname) ==="
+        set +e
+        "$@"
+        code=$?
+        set -e
+    fi
     local global_code
     global_code=$(sync_status "$code")
-    echo "=== END ${phase} local_code=${code} global_code=${global_code} ==="
+    echo "=== END ${phase} mpi_rank=${world_rank} local_code=${code} global_code=${global_code} ==="
     if (( global_code != 0 )); then
         return "$global_code"
     fi
 }
 
-{
-    echo "node_rank=$node_rank"
-    echo "nnodes=$nnodes"
-    echo "hostname=$(hostname)"
-    echo "master_addr=$master_addr"
-    echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
-    nvidia-smi --query-gpu=index,name,uuid,memory.total --format=csv,noheader
-    nvidia-smi topo -m
-} >"$run_root/topology/node${node_rank}.txt"
+if (( leader )); then
+    {
+        echo "world_rank=$world_rank"
+        echo "local_rank=$local_rank"
+        echo "node_rank=$node_rank"
+        echo "nnodes=$nnodes"
+        echo "hostname=$(hostname)"
+        echo "master_addr=$master_addr"
+        echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+        nvidia-smi --query-gpu=index,name,uuid,memory.total --format=csv,noheader
+        nvidia-smi topo -m
+    } >"$run_root/topology/node${node_rank}.txt"
+fi
 
-make -C "$root/third_party/Megatron-LM/megatron/core/datasets"
+run_checked build_datasets \
+    make -C "$root/third_party/Megatron-LM/megatron/core/datasets"
 
 methods=muon_bf16_states,muon_fp8_states,frugal_muon_muon_bf16_states,frugal_muon_muon_fp8_states
 common=(
@@ -156,7 +192,7 @@ run_checked cross_pp2_dp8 \
         --use-tp-pp-dp-mapping \
         "${common[@]}"
 
-if [[ "$node_rank" == 0 ]]; then
+if [[ "$world_rank" == 0 ]]; then
     echo "=== MULTINODE 16-GPU RESULTS ==="
     find "$run_root" -name results.md -print -exec cat {} \;
     echo "RUN_ROOT=$run_root"
