@@ -52,6 +52,11 @@ python scripts/cloud/download_hf_checkpoint.py \
     --token-file "${token_file}" \
     --expected-iteration 160000
 
+if [[ "${PREPARE_ONLY:-0}" == "1" ]]; then
+    echo "PREPARE_COMPLETE"
+    exit 0
+fi
+
 export FINEWEB_MANIFEST="${manifest_path}"
 export RESUME_FROM="${checkpoint_dir}"
 export HF_TOKEN_FILE="${token_file}"
