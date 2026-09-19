@@ -298,6 +298,78 @@ def test_multinode_coordination_without_mpi4py(tmp_path):
         assert stdout.strip() == "2"
 
 
+def test_external_repeats_wait_for_all_ranks_and_propagate_failure(tmp_path):
+    import sys
+
+    code = (
+        "from pathlib import Path; "
+        "from scripts.benchmark_muon_state_communication import _sync_external_repeat; "
+        "import os, time; "
+        "rank = int(os.environ['RANK']); "
+        "time.sleep(0.5 if rank == 1 else 0); "
+        f"print(_sync_external_repeat(Path({str(tmp_path)!r}), '4.9b', "
+        "'muon_bf16_states', 0, rank, 2, rank == 1))"
+    )
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", code],
+            env=os.environ | {"RANK": str(rank), "WORLD_SIZE": "2", "PYTHONPATH": "."},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for rank in range(2)
+    ]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stderr
+        assert stdout.strip() == "1"
+
+
+def test_external_benchmark_does_not_overlap_successive_repeats(tmp_path):
+    import sys
+
+    code = f"""
+import os
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from scripts import benchmark_muon_state_communication as bench
+
+output = Path({str(tmp_path)!r})
+rank = int(os.environ['RANK'])
+bench.parse_args = lambda: SimpleNamespace(
+    models=['4.9b'], methods=['muon_bf16_states'], repeats=2,
+    tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=2,
+    output_dir=output,
+)
+def fake_run_one(root, args, model, method, repeat):
+    if rank == 1 and repeat == 0:
+        time.sleep(0.5)
+        (output / 'rank1_finished_repeat0').write_text('yes')
+    if rank == 0 and repeat == 1:
+        assert (output / 'rank1_finished_repeat0').exists()
+    return {{'status': 'ok', 'mean_step_ms': 1, 'state_all_gather_ms': 1, 'rank': rank}}
+bench.run_one = fake_run_one
+bench.aggregate_external = lambda rows: []
+bench.write_results = lambda args, rows: None
+raise SystemExit(bench.main())
+"""
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", code],
+            env=os.environ | {"RANK": str(rank), "WORLD_SIZE": "2", "PYTHONPATH": "."},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for rank in range(2)
+    ]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, f"{stdout}\n{stderr}"
+
+
 def test_dataset_helper_can_use_torch_bundled_pybind11_headers():
     makefile = Path(
         "third_party/Megatron-LM/megatron/core/datasets/Makefile"

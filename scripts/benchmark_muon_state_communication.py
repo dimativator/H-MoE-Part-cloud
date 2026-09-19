@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import os
 import re
@@ -437,6 +438,32 @@ def run_one(
     return row
 
 
+def _sync_external_repeat(
+    output_dir: Path,
+    model: str,
+    method: str,
+    repeat: int,
+    rank: int,
+    world_size: int,
+    failed: bool,
+) -> int:
+    """Keep all external ranks between repeats of the same torchrun store."""
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("benchmark_multinode_coordination.py")),
+        "sync",
+        str(output_dir),
+        f"repeat-{model}-{method}-{repeat}",
+        str(int(failed)),
+    ]
+    env = os.environ | {
+        "BENCHMARK_WORLD_RANK": str(rank),
+        "BENCHMARK_WORLD_SIZE": str(world_size),
+    }
+    result = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+    return int(result.stdout.strip())
+
+
 def aggregate_external(rank_rows: list[list[dict]]) -> list[dict]:
     grouped = defaultdict(list)
     for rows in rank_rows:
@@ -629,20 +656,31 @@ def main() -> int:
         raise SystemExit(
             f"external WORLD_SIZE={external_world_size} != TP*PP*DP={expected_world_size}"
         )
-    for model in args.models:
-        for method in args.methods:
-            for repeat in range(args.repeats):
-                print(f"RUN model={model} method={method} repeat={repeat}", flush=True)
-                row = run_one(root, args, model, method, repeat)
-                if row:
-                    rows.append(row)
-                    if external_world_size == 1:
-                        write_results(args, aggregate_repeats(_public_rows(rows)))
-                    print(
-                        f"RESULT status={row['status']} step={row['mean_step_ms']} "
-                        f"comm={row['state_all_gather_ms']}",
-                        flush=True,
-                    )
+    for model, method, repeat in itertools.product(
+        args.models, args.methods, range(args.repeats)
+    ):
+        print(f"RUN model={model} method={method} repeat={repeat}", flush=True)
+        row = run_one(root, args, model, method, repeat)
+        if row:
+            rows.append(row)
+            if external_world_size == 1:
+                write_results(args, aggregate_repeats(_public_rows(rows)))
+            print(
+                f"RESULT status={row['status']} step={row['mean_step_ms']} "
+                f"comm={row['state_all_gather_ms']}",
+                flush=True,
+            )
+            if external_world_size > 1 and _sync_external_repeat(
+                args.output_dir,
+                model,
+                method,
+                repeat,
+                external_rank,
+                external_world_size,
+                row["status"] != "ok",
+            ):
+                print("stopping after failed distributed repeat", flush=True)
+                break
     if external_world_size == 1:
         return int(any(row["status"] != "ok" for row in rows))
 
