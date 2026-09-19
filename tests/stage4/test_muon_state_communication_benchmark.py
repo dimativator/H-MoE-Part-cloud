@@ -370,6 +370,23 @@ raise SystemExit(bench.main())
         assert process.returncode == 0, f"{stdout}\n{stderr}"
 
 
+def test_pretrain_child_uses_fresh_store_for_each_repeat(tmp_path):
+    from scripts.benchmark_muon_state_communication import _pretrain_environment
+
+    parent = os.environ | {
+        "MASTER_ADDR": "127.0.0.1",
+        "MASTER_PORT": "29618",
+        "TORCHELASTIC_USE_AGENT_STORE": "True",
+    }
+    first = _pretrain_environment(parent, tmp_path, "4.9b", "muon_bf16_states", 0)
+    second = _pretrain_environment(parent, tmp_path, "4.9b", "muon_bf16_states", 1)
+
+    assert first["MASTER_PORT"] != parent["MASTER_PORT"]
+    assert first["MASTER_PORT"] != second["MASTER_PORT"]
+    assert "TORCHELASTIC_USE_AGENT_STORE" not in first
+    assert first["MASTER_ADDR"] == parent.get("MASTER_ADDR")
+
+
 def test_dataset_helper_can_use_torch_bundled_pybind11_headers():
     makefile = Path(
         "third_party/Megatron-LM/megatron/core/datasets/Makefile"

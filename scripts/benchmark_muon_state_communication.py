@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import itertools
 import json
 import os
@@ -370,6 +371,8 @@ def run_one(
     env["PYTHONPATH"] = os.pathsep.join(source_paths)
     env["PYTHONUNBUFFERED"] = "1"
     env["STAGE4_REPORT_PEAK_MEMORY"] = "1"
+    if external_distributed:
+        env = _pretrain_environment(env, args.output_dir, model, method, repeat)
     started = time.monotonic()
     process = subprocess.Popen(
         command,
@@ -436,6 +439,24 @@ def run_one(
         )
     )
     return row
+
+
+def _pretrain_environment(
+    parent: dict[str, str],
+    output_dir: Path,
+    model: str,
+    method: str,
+    repeat: int,
+) -> dict[str, str]:
+    """Use a fresh TCPStore instead of reusing torchrun's agent store keys."""
+    env = parent.copy()
+    env.pop("TORCHELASTIC_USE_AGENT_STORE", None)
+    identity = f"{output_dir}/{model}/{method}".encode()
+    base_port = 30000 + int.from_bytes(hashlib.sha256(identity).digest()[:4], "big") % 10000
+    if int(parent["MASTER_PORT"]) in range(base_port, base_port + 100):
+        base_port += 1000
+    env["MASTER_PORT"] = str(base_port + repeat)
+    return env
 
 
 def _sync_external_repeat(
