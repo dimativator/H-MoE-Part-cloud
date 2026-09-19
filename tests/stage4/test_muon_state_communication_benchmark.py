@@ -258,6 +258,46 @@ def test_16gpu_launcher_resolves_two_nodes_from_sixteen_mpi_ranks():
         )
 
 
+def test_multinode_coordination_without_mpi4py(tmp_path):
+    import ipaddress
+    import sys
+
+    helper = Path("scripts/benchmark_multinode_coordination.py")
+    env = os.environ | {"BENCHMARK_WORLD_SIZE": "4"}
+    addresses = [
+        subprocess.Popen(
+            [sys.executable, str(helper), "address", str(tmp_path)],
+            env=env | {"BENCHMARK_WORLD_RANK": str(rank)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for rank in reversed(range(4))
+    ]
+    resolved = []
+    for process in addresses:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stderr
+        resolved.append(stdout.strip())
+    assert len(set(resolved)) == 1
+    ipaddress.ip_address(resolved[0])
+
+    processes = [
+        subprocess.Popen(
+            [sys.executable, str(helper), "sync", str(tmp_path), "smoke", str(rank % 3)],
+            env=env | {"BENCHMARK_WORLD_RANK": str(rank)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for rank in range(4)
+    ]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stderr
+        assert stdout.strip() == "2"
+
+
 def test_dataset_helper_can_use_torch_bundled_pybind11_headers():
     makefile = Path(
         "third_party/Megatron-LM/megatron/core/datasets/Makefile"

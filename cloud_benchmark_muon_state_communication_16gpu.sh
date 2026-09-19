@@ -60,25 +60,14 @@ if (( leader )); then
     export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 fi
 
-master_addr=$(python - <<'PY'
-import socket
-from mpi4py import MPI
-
-comm = MPI.COMM_WORLD
-address = socket.gethostbyname(socket.gethostname()) if comm.Get_rank() == 0 else None
-print(comm.bcast(address, root=0))
-PY
-)
+export BENCHMARK_WORLD_RANK=$world_rank
+export BENCHMARK_WORLD_SIZE=$world_size
+master_addr=$(python "$root/scripts/benchmark_multinode_coordination.py" address "$run_root")
 
 sync_status() {
-    local local_code=$1
-    LOCAL_CODE=$local_code python - <<'PY'
-import os
-from mpi4py import MPI
-
-code = MPI.COMM_WORLD.allreduce(int(os.environ["LOCAL_CODE"]), op=MPI.MAX)
-print(code)
-PY
+    local phase=$1
+    local local_code=$2
+    python "$root/scripts/benchmark_multinode_coordination.py" sync "$run_root" "$phase" "$local_code"
 }
 
 run_checked() {
@@ -93,7 +82,7 @@ run_checked() {
         set -e
     fi
     local global_code
-    global_code=$(sync_status "$code")
+    global_code=$(sync_status "$phase" "$code")
     echo "=== END ${phase} mpi_rank=${world_rank} local_code=${code} global_code=${global_code} ==="
     if (( global_code != 0 )); then
         return "$global_code"
