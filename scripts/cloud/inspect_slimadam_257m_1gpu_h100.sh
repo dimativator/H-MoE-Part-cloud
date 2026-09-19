@@ -29,13 +29,22 @@ import torch
 checkpoint_dir = Path(sys.argv[1])
 main = torch.load(checkpoint_dir / "main.pt", map_location="cpu", mmap=True, weights_only=False)
 worker = torch.load(checkpoint_dir / "worker_0.pt", map_location="cpu", weights_only=False)
+initial_worker = torch.load(
+    "/workspace-SR006.nfs3/dimativator/checkpoints/slimadam_257m_fp8_states_8xC/160000/worker_0.pt",
+    map_location="cpu", weights_only=False,
+)
 iteration = int(main["itr"])
 reader = worker["train_reader_state"]
+initial_reader = initial_worker["train_reader_state"]
 step = int(reader["step"])
+initial_step = int(initial_reader["step"])
 print(f"CHECKPOINT_ITERATION={iteration}")
 print(f"WORKER_READER_STEP={step}")
+print(f"INITIAL_WORKER_READER_STEP={initial_step}")
 print(f"WORKER_READER_TYPE={reader['reader_type']}")
-if step != iteration * 4:
-    raise RuntimeError(f"reader step {step} does not match iteration {iteration} x acc_steps 4")
+expected_step = initial_step + (iteration - 160000) * 4
+print(f"EXPECTED_WORKER_READER_STEP={expected_step}")
+if step != expected_step:
+    raise RuntimeError(f"reader step {step} does not match expected {expected_step}")
 PY
 fi
