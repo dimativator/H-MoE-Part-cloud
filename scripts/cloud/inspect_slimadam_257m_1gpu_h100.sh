@@ -20,4 +20,22 @@ grep -aE 'GPU_STATUS|NVIDIA H100|PARITY_CONFIG|Resuming Training|FINEWEB_VALIDAT
 if [[ -d "${results_dir}/ckpts/latest" ]]; then
     find "${results_dir}/ckpts/latest" -maxdepth 1 -type f \
         -printf 'CHECKPOINT_FILE %f %s\n' | sort
+    python - "${results_dir}/ckpts/latest" <<'PY'
+import sys
+from pathlib import Path
+
+import torch
+
+checkpoint_dir = Path(sys.argv[1])
+main = torch.load(checkpoint_dir / "main.pt", map_location="cpu", mmap=True, weights_only=False)
+worker = torch.load(checkpoint_dir / "worker_0.pt", map_location="cpu", weights_only=False)
+iteration = int(main["itr"])
+reader = worker["train_reader_state"]
+step = int(reader["step"])
+print(f"CHECKPOINT_ITERATION={iteration}")
+print(f"WORKER_READER_STEP={step}")
+print(f"WORKER_READER_TYPE={reader['reader_type']}")
+if step != iteration * 4:
+    raise RuntimeError(f"reader step {step} does not match iteration {iteration} x acc_steps 4")
+PY
 fi
