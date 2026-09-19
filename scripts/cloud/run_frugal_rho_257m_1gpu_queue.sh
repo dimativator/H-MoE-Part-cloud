@@ -99,8 +99,8 @@ remove_checkpoint_tree() {
 archive_incomplete_experiment() {
     local target=$1
     local stamp
-    [[ "${MODE}" == "full" && "${ARCHIVE_INCOMPLETE}" == "1" ]] || return
-    [[ -f "${target}/metrics.jsonl" ]] || return
+    [[ "${MODE}" == "full" && "${ARCHIVE_INCOMPLETE}" == "1" ]] || return 0
+    [[ -f "${target}/metrics.jsonl" ]] || return 0
     case "${target}" in
         "${RESULTS_DIR}/"*) ;;
         *) echo "Refusing unsafe incomplete-run archive: ${target}" >&2; exit 12 ;;
