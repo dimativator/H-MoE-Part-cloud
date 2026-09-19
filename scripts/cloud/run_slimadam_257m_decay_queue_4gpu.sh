@@ -9,9 +9,19 @@ readonly eval_cache_dir=/home/jovyan/evals_cache
 
 rank=${OMPI_COMM_WORLD_RANK:-0}
 world_size=${OMPI_COMM_WORLD_SIZE:-1}
-if [[ "${world_size}" != 4 ]]; then
-    echo "This decay queue requires exactly four MPI ranks" >&2
-    exit 2
+if (( world_size > 1 )); then
+    if [[ "${world_size}" != 4 ]]; then
+        echo "This decay queue requires four MPI ranks or one four-GPU worker" >&2
+        exit 2
+    fi
+    export RANK=${RANK:-${rank}}
+    export WORLD_SIZE=${WORLD_SIZE:-${world_size}}
+    export LOCAL_RANK=${LOCAL_RANK:-${OMPI_COMM_WORLD_LOCAL_RANK:-0}}
+    export MASTER_ADDR=${MASTER_ADDR:-$(hostname -f)}
+    export MASTER_PORT=${MASTER_PORT:-29500}
+    train_launcher=(python)
+else
+    train_launcher=(torchrun --standalone --nproc_per_node=4)
 fi
 if [[ ! -f "${checkpoint_root}/slimadam_decay_sources_ready" ]]; then
     echo "Verified decay checkpoints are not ready" >&2
@@ -25,11 +35,6 @@ for iteration in 35325 70650 141300; do
 done
 [[ -f "${data_dir}/packed_metadata.json" ]] || exit 4
 
-export RANK=${RANK:-${rank}}
-export WORLD_SIZE=${WORLD_SIZE:-${world_size}}
-export LOCAL_RANK=${LOCAL_RANK:-${OMPI_COMM_WORLD_LOCAL_RANK:-0}}
-export MASTER_ADDR=${MASTER_ADDR:-$(hostname -f)}
-export MASTER_PORT=${MASTER_PORT:-29500}
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_ALLOC_CONF=expandable_segments:True
@@ -43,7 +48,7 @@ run_decay() {
     local log_file="${log_dir}/${experiment}_rank${rank}.log"
     echo "DECAY_START scale=${scale} start=${start} end=${end} rank=${rank} $(date -Is)" | tee -a "${log_file}"
     set +e
-    python src/main.py \
+    "${train_launcher[@]}" src/main.py \
         --experiment-name "${experiment}" \
         --distributed-backend nccl \
         --seed 0 --data-seed 1337 \
