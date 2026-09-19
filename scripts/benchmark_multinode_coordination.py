@@ -7,6 +7,14 @@ import time
 from pathlib import Path
 
 
+def coordination_timeout_seconds(env: dict[str, str] | None = None) -> int:
+    source = os.environ if env is None else env
+    timeout = int(source.get("BENCHMARK_COORDINATION_TIMEOUT_SECONDS", "300"))
+    if timeout < 1:
+        raise ValueError("coordination timeout must be positive")
+    return timeout
+
+
 def _publish(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
@@ -27,7 +35,7 @@ def main() -> None:
     root = Path(sys.argv[2]) / "coordination"
     rank = int(os.environ["BENCHMARK_WORLD_RANK"])
     world_size = int(os.environ["BENCHMARK_WORLD_SIZE"])
-    deadline = time.monotonic() + 300
+    deadline = time.monotonic() + coordination_timeout_seconds()
 
     if action == "address":
         path = root / "master_address"

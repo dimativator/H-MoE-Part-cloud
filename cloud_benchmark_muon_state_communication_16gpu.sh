@@ -67,7 +67,8 @@ master_addr=$(python "$root/scripts/benchmark_multinode_coordination.py" address
 sync_status() {
     local phase=$1
     local local_code=$2
-    python "$root/scripts/benchmark_multinode_coordination.py" sync "$run_root" "$phase" "$local_code"
+    BENCHMARK_COORDINATION_TIMEOUT_SECONDS=18000 \
+        python "$root/scripts/benchmark_multinode_coordination.py" sync "$run_root" "$phase" "$local_code"
 }
 
 run_checked() {

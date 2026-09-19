@@ -227,6 +227,14 @@ def test_16gpu_launcher_uses_two_nodes_and_cross_node_dp_mapping():
     assert "benchmark_multinode_collectives.py" in launcher
 
 
+def test_16gpu_phase_barrier_outlives_benchmark_runtime():
+    from scripts.benchmark_multinode_coordination import coordination_timeout_seconds
+
+    launcher = Path("cloud_benchmark_muon_state_communication_16gpu.sh").read_text()
+    assert "BENCHMARK_COORDINATION_TIMEOUT_SECONDS=18000" in launcher
+    assert coordination_timeout_seconds({"BENCHMARK_COORDINATION_TIMEOUT_SECONDS": "18000"}) == 18000
+
+
 def test_16gpu_launcher_resolves_two_nodes_from_sixteen_mpi_ranks():
     script = Path("cloud_benchmark_muon_state_communication_16gpu.sh")
     layouts = (
