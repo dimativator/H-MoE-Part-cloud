@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--expected-iteration", type=int, required=True)
+    parser.add_argument("--expected-world-size", type=int, default=1)
     args = parser.parse_args()
 
     token = args.token_file.read_text(encoding="utf-8").strip()
@@ -44,8 +45,10 @@ def main() -> int:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if int(manifest["iteration"]) != args.expected_iteration:
             raise RuntimeError("Unexpected checkpoint iteration in manifest")
-        if int(manifest["world_size"]) != 1:
-            raise RuntimeError("Expected a one-worker checkpoint")
+        if int(manifest["world_size"]) != args.expected_world_size:
+            raise RuntimeError(
+                f"Expected {args.expected_world_size} workers in checkpoint"
+            )
 
         source_dir = manifest_path.parent
         for name, expected in manifest["files"].items():
