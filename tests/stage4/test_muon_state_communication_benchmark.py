@@ -89,6 +89,30 @@ def test_pp2_model_keeps_32_layers_per_pipeline_stage():
     assert model["layers"] // 2 == bench.MODELS["4.9b"]["layers"]
 
 
+def test_dp8_scaling_models_keep_4_9b_layer_shape():
+    names = ("1b", "2b", "3b", "3.5b", "4b", "4.5b", "4.9b")
+    assert [bench.MODELS[name]["layers"] for name in names] == [5, 12, 19, 22, 26, 29, 32]
+    for name in names:
+        assert {key: bench.MODELS[name][key] for key in ("hidden", "ffn", "heads")} == {
+            "hidden": 3456,
+            "ffn": 9216,
+            "heads": 27,
+        }
+
+
+def test_dp8_scaling_launcher_preserves_measurement_settings():
+    launcher = (Path(__file__).resolve().parents[2] / "cloud_benchmark_muon_state_communication_dp8_scaling.sh").read_text()
+    assert "for model in 1b 2b 3b 3.5b 4b 4.5b 4.9b" in launcher
+    assert "TP=1 PP=1 DP=8" in launcher
+    assert "--global-batch-size 8" in launcher
+    assert "--warmup-steps 10" in launcher
+    assert "--measure-steps 50" in launcher
+    assert "--repeats 3" in launcher
+    assert "--fp8-bucket-bytes 67108864" in launcher
+    assert "--fused-fp8-ns-input" in launcher
+    assert "frugal_muon_muon_fp8_states" in launcher
+
+
 def test_profiles_are_reduced_to_the_slowest_rank_per_step():
     output = "\n".join(
         (
