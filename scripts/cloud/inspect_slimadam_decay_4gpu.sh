@@ -19,3 +19,11 @@ for scale in 1 2 4; do
         fi
     done
 done
+
+latest_full=$(find "${log_dir}" -maxdepth 1 -type f \
+    -name '257m_slim_adam_fp8_states_8xC_cloud_1gpu_h100_full_*.log' \
+    -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-)
+echo "FULL_LOG=${latest_full:-missing}"
+if [[ -n "${latest_full}" ]]; then
+    tr '\r' '\n' < "${latest_full}" | grep -aE 'Train: Iter=|>Eval:|Traceback|Error|TRAIN_EXIT' | tail -n 25 || true
+fi
