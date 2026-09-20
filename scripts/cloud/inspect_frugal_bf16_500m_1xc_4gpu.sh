@@ -8,6 +8,13 @@ METRICS_JSONL=${RESULTS_DIR}/${WANDB_GROUP}/${EXPERIMENT_NAME}/metrics.jsonl
 
 echo "DATE=$(date --iso-8601=seconds)"
 echo "METRICS_JSONL=${METRICS_JSONL}"
+if [[ "${SHOW_GPU_START:-0}" == "1" ]]; then
+    rank0_log=${RESULTS_DIR}/logs/${EXPERIMENT_NAME}_rank0.log
+    if [[ -f "${rank0_log}" ]]; then
+        echo "GPU_START_SNAPSHOT"
+        sed -n '1,30p' "${rank0_log}"
+    fi
+fi
 if [[ -f "${METRICS_JSONL}" ]]; then
     echo "METRIC_LINES=$(wc -l < "${METRICS_JSONL}")"
     tail -n 10 "${METRICS_JSONL}"
