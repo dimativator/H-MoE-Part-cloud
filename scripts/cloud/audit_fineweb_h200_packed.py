@@ -9,7 +9,11 @@ from pathlib import Path
 import numpy as np
 
 
-EXPECTED_FORMATS = {"packed_fineweb_h200_v1", "packed_fineweb_h200_v2"}
+EXPECTED_FORMATS = {
+    "packed_fineweb_h200_v1",
+    "packed_fineweb_h200_v2",
+    "packed_fineweb_h200_v3",
+}
 EXPECTED_MANIFEST_FINGERPRINT = (
     "7327154b810ec27cf5ca794aedcc3aea11796b218261ff24b5e2d3d2d283e00b"
 )

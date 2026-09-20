@@ -397,6 +397,69 @@ class PackedFineWebMultiGpuParityTest(unittest.TestCase):
             ),
         )
 
+    def test_three_segment_snapshot_crosses_the_second_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_snapshot(root)
+            metadata_path = root / "packed_metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["format"] = "packed_fineweb_h200_v3"
+            for rank_metadata in metadata["ranks"]:
+                rank = int(rank_metadata["rank"])
+                first = dict(rank_metadata)
+                extra = []
+                for segment_index in (1, 2):
+                    values = np.asarray(
+                        [
+                            [1000 * segment_index + 100 * rank + index * 3 + offset
+                             for offset in (1, 2, 3)]
+                            for index in range(4)
+                        ],
+                        dtype="<u2",
+                    )
+                    path = root / f"rank{rank}.segment{segment_index}.uint16"
+                    payload = values.tobytes()
+                    path.write_bytes(payload)
+                    extra.append(
+                        {
+                            "file": path.name,
+                            "blocks": len(values),
+                            "bytes": len(payload),
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                        }
+                    )
+                rank_metadata["segments"] = [first, *extra]
+                rank_metadata["blocks"] = first["blocks"] + sum(
+                    segment["blocks"] for segment in extra
+                )
+                rank_metadata["bytes"] = first["bytes"] + sum(
+                    segment["bytes"] for segment in extra
+                )
+                rank_metadata.pop("file")
+                rank_metadata.pop("sha256")
+            metadata_path.write_text(json.dumps(metadata))
+
+            readers = [self._reader(root, rank=rank, world_size=2) for rank in range(2)]
+            for reader in readers:
+                reader.set_step(3)
+            boundary_batch = torch.cat([self._blocks(reader) for reader in readers])
+
+        torch.testing.assert_close(
+            boundary_batch,
+            torch.tensor(
+                [
+                    [2001, 2002, 2003],
+                    [2004, 2005, 2006],
+                    [2007, 2008, 2009],
+                    [2010, 2011, 2012],
+                    [2101, 2102, 2103],
+                    [2104, 2105, 2106],
+                    [2107, 2108, 2109],
+                    [2110, 2111, 2112],
+                ]
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
