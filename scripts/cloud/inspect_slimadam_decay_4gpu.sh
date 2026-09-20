@@ -37,9 +37,10 @@ from pathlib import Path
 
 metadata = json.loads(Path(sys.argv[1]).read_text())
 batch_size = int(metadata["batch_size"])
+print(f"PACKED_SOURCE world_size={metadata['world_size']} batch_size={batch_size}")
 for rank in metadata["ranks"]:
     steps = int(rank["blocks"]) // batch_size
-    print(f"PACKED_CAPACITY rank={rank['rank']} microsteps={steps} iterations_at_acc16={steps // 16}")
+    print(f"PACKED_CAPACITY rank={rank['rank']} blocks={rank['blocks']} source_microsteps={steps}")
 PY
 
 for scale in 1 2 4; do
@@ -47,5 +48,21 @@ for scale in 1 2 4; do
     echo "DECAY_CHECKPOINTS scale=${scale}"
     if [[ -d "${ckpt_root}" ]]; then
         find "${ckpt_root}" -maxdepth 2 -type f -name 'main.pt' -printf '%P %s bytes\n' | sort
+        if [[ -f "${ckpt_root}/latest/main.pt" ]]; then
+            python - "${ckpt_root}/latest" <<'PY'
+import sys
+from pathlib import Path
+
+import torch
+
+root = Path(sys.argv[1])
+main = torch.load(root / "main.pt", map_location="cpu", mmap=True, weights_only=False)
+print(f"LATEST_DECAY_CHECKPOINT path={root} iteration={main.get('itr')}")
+for worker_path in sorted(root.glob("worker_*.pt")):
+    worker = torch.load(worker_path, map_location="cpu", weights_only=False)
+    reader = worker.get("train_reader_state", {})
+    print(f"LATEST_DECAY_WORKER name={worker_path.name} reader_type={reader.get('reader_type')} step={reader.get('step')}")
+PY
+        fi
     fi
 done
