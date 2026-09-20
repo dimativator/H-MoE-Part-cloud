@@ -2,6 +2,8 @@
 set -euo pipefail
 
 readonly log_dir=/workspace-SR006.nfs3/dimativator/logs/slimadam_257m_fp8_states_cloud
+readonly data_dir=/workspace-SR006.nfs3/dimativator/fineweb-h200-packed
+readonly result_root=/workspace-SR006.nfs3/dimativator/exps/8xChinchilla_257M_fp8_states_cloud/8xChinchilla_257M_fp8_states
 
 for scale in 1 2 4; do
     for rank in 0 1 2 3; do
@@ -27,3 +29,23 @@ echo "FULL_LOG=${latest_full:-missing}"
 if [[ -n "${latest_full}" ]]; then
     tr '\r' '\n' < "${latest_full}" | grep -aE 'Train: Iter=|>Eval:|Traceback|Error|TRAIN_EXIT' | tail -n 25 || true
 fi
+
+python - "${data_dir}/packed_metadata.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata = json.loads(Path(sys.argv[1]).read_text())
+batch_size = int(metadata["batch_size"])
+for rank in metadata["ranks"]:
+    steps = int(rank["blocks"]) // batch_size
+    print(f"PACKED_CAPACITY rank={rank['rank']} microsteps={steps} iterations_at_acc16={steps // 16}")
+PY
+
+for scale in 1 2 4; do
+    ckpt_root="${result_root}/257m_slim_adam_fp8_states_${scale}xC_decay_cloud_4gpu/ckpts"
+    echo "DECAY_CHECKPOINTS scale=${scale}"
+    if [[ -d "${ckpt_root}" ]]; then
+        find "${ckpt_root}" -maxdepth 2 -type f -name 'main.pt' -printf '%P %s bytes\n' | sort
+    fi
+done
