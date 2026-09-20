@@ -5,6 +5,11 @@ readonly log_dir=/workspace-SR006.nfs3/dimativator/logs/slimadam_257m_fp8_states
 readonly data_dir=/workspace-SR006.nfs3/dimativator/fineweb-h200-packed
 readonly result_root=/workspace-SR006.nfs3/dimativator/exps/8xChinchilla_257M_fp8_states_cloud/8xChinchilla_257M_fp8_states
 
+df -h "${data_dir}"
+find "${data_dir}" -maxdepth 1 -type f \
+    \( -name '*continuation*state*.json' -o -name '*third*' \) \
+    -printf 'PACKED_AUX_FILE %f %s bytes\n' | sort
+
 for scale in 1 2 4; do
     for rank in 0 1 2 3; do
         log_file="${log_dir}/257m_slim_adam_fp8_states_${scale}xC_decay_cloud_4gpu_rank${rank}.log"
