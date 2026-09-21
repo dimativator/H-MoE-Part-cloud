@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python - <<'PY'
+PYTHONPATH=src python - <<'PY'
 from tests.test_fineweb_live_sharded import (
     test_live_sharded_reader_round_trips_state,
     test_live_sharded_reader_splits_one_source_batch,
