@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -25,6 +26,7 @@ NON_METRIC_KEYS = {
     "queue",
     "timestamp",
 }
+MPI_PREFIX_RE = re.compile(r"\[\d+,\d+\]<stdout>:")
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,10 +51,24 @@ def load_records(path: Path) -> list[dict[str, Any]]:
             record = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"invalid JSON at {path}:{line_number}") from error
+        record = clean_mpi_fragments(record)
         if not isinstance(record.get("iter"), int):
             continue
         records.append(record)
     return records
+
+
+def clean_mpi_fragments(value: Any) -> Any:
+    if isinstance(value, str):
+        return MPI_PREFIX_RE.sub("", value)
+    if isinstance(value, dict):
+        return {
+            clean_mpi_fragments(key): clean_mpi_fragments(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [clean_mpi_fragments(item) for item in value]
+    return value
 
 
 def merge_by_iteration(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -75,8 +91,8 @@ def deterministic_run_id(experiment: str) -> str:
 
 def find_experiments(root: Path) -> dict[str, Path]:
     found: dict[str, Path] = {}
-    for path in root.glob("*/*/metrics.jsonl"):
-        experiment = path.parent.name
+    for path in root.rglob("*.jsonl"):
+        experiment = path.parent.name if path.name == "metrics.jsonl" else path.stem
         if experiment in EXPECTED_EXPERIMENTS:
             found[experiment] = path
     missing = EXPECTED_EXPERIMENTS - found.keys()
@@ -94,7 +110,13 @@ def upload_one(
 ) -> str:
     records = load_records(path)
     experiment = path.parent.name
-    group = path.parent.parent.name
+    if path.name != "metrics.jsonl":
+        experiment = path.stem
+    group = (
+        "1xChinchilla_resume_500M_frugal_muon_2gpu_cloud"
+        if "_1xC_resume_" in experiment
+        else "2xChinchilla_500M_frugal_muon_2gpu_cloud"
+    )
     if not any("final-val/loss" in record for record in records):
         raise ValueError(f"final validation is missing: {experiment}")
     history = merge_by_iteration(records)
