@@ -37,7 +37,8 @@ echo GPU_STATUS_BEFORE_LAUNCH
 nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free --format=csv
 
 wait_for_checkpoint() {
-    local iteration=$1 checkpoint_dir="${checkpoint_root}/${iteration}"
+    local iteration=$1
+    local checkpoint_dir="${checkpoint_root}/${iteration}"
     echo "WAITING_FOR_CHECKPOINT optimizer=${OPTIMIZER} iteration=${iteration}"
     while true; do
         if [[ -s "${checkpoint_dir}/main.pt" ]] && \
