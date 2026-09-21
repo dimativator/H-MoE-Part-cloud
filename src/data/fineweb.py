@@ -198,6 +198,80 @@ class FineWebTrainReader:
         self._replace_stream(state["stream_state"])
 
 
+class FineWebLiveShardedTrainReader:
+    """Shard one verified source-rank live stream across physical DDP ranks."""
+
+    requires_checkpoint_state = True
+
+    def __init__(
+        self,
+        source_reader: FineWebTrainReader,
+        *,
+        physical_rank: int,
+        physical_world_size: int,
+        source_world_size: int,
+    ) -> None:
+        if physical_world_size <= source_world_size:
+            raise ValueError("Physical world size must exceed source world size")
+        if physical_world_size % source_world_size != 0:
+            raise ValueError("Physical world size must divide by source world size")
+        self.shards_per_source = physical_world_size // source_world_size
+        self.source_rank, self.shard_rank = divmod(
+            physical_rank, self.shards_per_source
+        )
+        if source_reader.rank != self.source_rank:
+            raise ValueError("Source reader rank does not match physical rank")
+        if source_reader.batch_size % self.shards_per_source != 0:
+            raise ValueError("Source batch cannot be split across physical ranks")
+        self.source_reader = source_reader
+        self.batch_size = source_reader.batch_size // self.shards_per_source
+        self.sequence_length = source_reader.sequence_length
+        self.step = source_reader.step
+
+    def set_step(self, step: int) -> None:
+        if step != self.step:
+            raise RuntimeError(
+                f"Live sharded reader is initialized at step {self.step}, got {step}"
+            )
+
+    def sample_batch(self):
+        x, y = self.source_reader.sample_batch()
+        start = self.shard_rank * self.batch_size
+        end = start + self.batch_size
+        self.step = self.source_reader.step
+        return x[start:end], y[start:end]
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "reader_type": "fineweb_live_sharded_train_reader_v1",
+            "source_rank": self.source_rank,
+            "shard_rank": self.shard_rank,
+            "shards_per_source": self.shards_per_source,
+            "batch_size": self.batch_size,
+            "sequence_length": self.sequence_length,
+            "step": self.step,
+            "source_state": self.source_reader.state_dict(),
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        if state.get("reader_type") != "fineweb_live_sharded_train_reader_v1":
+            raise RuntimeError("Unsupported live sharded FineWeb checkpoint format")
+        expected = {
+            "source_rank": self.source_rank,
+            "shard_rank": self.shard_rank,
+            "shards_per_source": self.shards_per_source,
+            "batch_size": self.batch_size,
+            "sequence_length": self.sequence_length,
+        }
+        for key, value in expected.items():
+            if int(state[key]) != value:
+                raise ValueError(f"Checkpoint {key} does not match live reader")
+        self.source_reader.load_state_dict(state["source_state"])
+        self.step = int(state["step"])
+        if self.source_reader.step != self.step:
+            raise ValueError("Live source and shard reader steps differ")
+
+
 def _broadcast_split_plan(
     split_plan: SplitPlan | None,
     *,
@@ -299,9 +373,63 @@ def build_fineweb_readers(
 
     replay_world_size = int(args.fineweb_replay_world_size)
     replay_layout = str(args.fineweb_replay_layout)
+    live_state_dir = getattr(args, "fineweb_live_source_state_dir", None)
+    live_source_world_size = int(
+        getattr(args, "fineweb_live_source_world_size", 0)
+    )
     if replay_world_size < 1:
         raise ValueError("--fineweb-replay-world-size must be positive")
-    if replay_world_size > 1:
+    if live_state_dir:
+        if live_source_world_size < 1:
+            raise ValueError(
+                "--fineweb-live-source-world-size is required with live states"
+            )
+        if world_size <= live_source_world_size:
+            raise ValueError("Live FineWeb sharding requires a larger physical world")
+        if world_size % live_source_world_size != 0:
+            raise ValueError("Physical world must divide by live source world")
+        shards_per_source = world_size // live_source_world_size
+        source_rank = rank // shards_per_source
+        source_batch_size = args.batch_size * shards_per_source
+        source_reader = FineWebTrainReader(
+            manifest,
+            split_plan,
+            tokenizer_factory,
+            tokenizer_name=tokenizer_name,
+            batch_size=source_batch_size,
+            sequence_length=args.sequence_length,
+            rank=source_rank,
+            world_size=live_source_world_size,
+            num_token_workers=num_token_workers,
+            doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
+            prefetch_batches=DEFAULT_PREFETCH_BATCHES,
+        )
+        state_path = (
+            Path(live_state_dir)
+            / f"train_rank{source_rank}.third.state.json"
+        )
+        payload = json.loads(state_path.read_text())
+        stream_state = payload["stream_state"]
+        emitted_blocks = int(stream_state["emitted_block_count"])
+        if emitted_blocks % source_batch_size != 0:
+            raise ValueError("Live FineWeb block cursor is not batch aligned")
+        source_reader.load_state_dict(
+            {
+                "reader_type": "fineweb_train_reader_v1",
+                "tokenizer_name": tokenizer_name,
+                "batch_size": source_batch_size,
+                "sequence_length": args.sequence_length,
+                "step": emitted_blocks // source_batch_size,
+                "stream_state": stream_state,
+            }
+        )
+        train_reader = FineWebLiveShardedTrainReader(
+            source_reader,
+            physical_rank=rank,
+            physical_world_size=world_size,
+            source_world_size=live_source_world_size,
+        )
+    elif replay_world_size > 1:
         if world_size != 1 or rank != 0:
             raise ValueError("FineWeb replay is supported only by a single training process")
         if replay_layout == "concat" and args.batch_size % replay_world_size != 0:

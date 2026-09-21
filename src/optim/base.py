@@ -248,7 +248,9 @@ def train(
         )
         loaded_train_reader_state = load_worker_state(
             ckpt_dir,
-            train_reader=train_reader,
+            train_reader=(
+                None if cfg.skip_train_reader_state_on_resume else train_reader
+            ),
         )
         if cfg.decay_from_checkpoint:
             remaining_steps = cfg.iterations - curr_iter

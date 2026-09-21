@@ -48,6 +48,15 @@ def parse_args(base_parser, args, namespace):
     )
     parser.add_argument("--latest-ckpt-interval", default=0, type=int)
     parser.add_argument(
+        "--skip-train-reader-state-on-resume",
+        action="store_true",
+        help=(
+            "Restore model, optimizer, scheduler, and RNG state but initialize "
+            "the active train reader from its configured cursor instead of the "
+            "checkpoint worker reader state."
+        ),
+    )
+    parser.add_argument(
         "--upload-latest-ckpt-to-wandb",
         action="store_true",
         help=(
@@ -207,6 +216,22 @@ def parse_args(base_parser, args, namespace):
             "Concatenate virtual-rank batches, or replay full source-rank "
             "batches round-robin while preserving --batch-size."
         ),
+    )
+    parser.add_argument(
+        "--fineweb-live-source-state-dir",
+        type=str,
+        default=None,
+        help=(
+            "Resume a multi-GPU FineWeb run from verified source-rank stream "
+            "states in train_rank<N>.third.state.json without materializing "
+            "more packed tokens."
+        ),
+    )
+    parser.add_argument(
+        "--fineweb-live-source-world-size",
+        type=int,
+        default=0,
+        help="Source world size used by --fineweb-live-source-state-dir.",
     )
     parser.add_argument("--eval-cache-dir", type=str, default=None,
         help="Directory for eval caches (e.g. wikitext103 tokenized data). "
