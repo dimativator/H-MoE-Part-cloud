@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m pytest -q tests/test_fineweb_live_sharded.py
+python - <<'PY'
+from tests.test_fineweb_live_sharded import (
+    test_live_sharded_reader_round_trips_state,
+    test_live_sharded_reader_splits_one_source_batch,
+)
+
+test_live_sharded_reader_splits_one_source_batch()
+test_live_sharded_reader_round_trips_state()
+print("LIVE_SHARDED_UNIT_TESTS_OK")
+PY
 python - "${1:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}" <<'PY'
 import json
 import sys
