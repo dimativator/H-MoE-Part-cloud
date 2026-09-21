@@ -3,9 +3,6 @@ set -euo pipefail
 
 readonly wandb_root=/workspace-SR006.nfs3/dimativator/exps/8xChinchilla_257M_fp8_states_cloud/wandb_offline/wandb
 
-export WANDB_BASE_URL=https://wandb-radfan.ru
-wandb login --verify
-
 python - "${wandb_root}" <<'PY'
 import json
 import sys
