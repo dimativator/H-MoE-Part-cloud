@@ -90,22 +90,34 @@ if [[ "${MODE}" == smoke ]]; then
     echo "BF16_SMOKE_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
     exit 0
 fi
-[[ "${MODE}" == full ]] || { echo "MODE must be smoke or full" >&2; exit 2; }
+[[ "${MODE}" == full || "${MODE}" == resume ]] || {
+    echo "MODE must be smoke, full, or resume" >&2
+    exit 2
+}
 
-for source_rank in 0 1; do
-    state_file="${packed_dir}/train_rank${source_rank}.third.state.json"
-    [[ -s "${state_file}" ]] || { echo "Missing ${state_file}" >&2; exit 4; }
-done
+if [[ "${MODE}" == full ]]; then
+    for source_rank in 0 1; do
+        state_file="${packed_dir}/train_rank${source_rank}.third.state.json"
+        [[ -s "${state_file}" ]] || { echo "Missing ${state_file}" >&2; exit 4; }
+    done
 
-echo "FULL_PHASE1_START optimizer=${OPTIMIZER} rank=${rank}"
-"${launcher[@]}" src/main.py \
-    "${common_args[@]}" \
-    --datasets-dir "${packed_dir}" \
-    --fineweb-replay-world-size 1 --fineweb-replay-layout concat \
-    --early-stop-iteration 157100 \
-    --inter-ckpts 35325 70650 141300 \
-    --latest-ckpt-interval 100
-echo "FULL_PHASE1_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
+    echo "FULL_PHASE1_START optimizer=${OPTIMIZER} rank=${rank}"
+    "${launcher[@]}" src/main.py \
+        "${common_args[@]}" \
+        --datasets-dir "${packed_dir}" \
+        --fineweb-replay-world-size 1 --fineweb-replay-layout concat \
+        --early-stop-iteration 157100 \
+        --inter-ckpts 35325 70650 141300 \
+        --latest-ckpt-interval 100
+    echo "FULL_PHASE1_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
+else
+    latest_checkpoint="${results_dir}/${group}/${experiment}/ckpts/latest/main.pt"
+    [[ -s "${latest_checkpoint}" ]] || {
+        echo "Missing resume checkpoint ${latest_checkpoint}" >&2
+        exit 5
+    }
+    echo "FULL_PHASE1_SKIPPED optimizer=${OPTIMIZER} rank=${rank} mode=resume"
+fi
 
 manifest_file="/dev/shm/fineweb_h200_manifest_${label}_${rank}.json"
 python - "${manifest_b64}" "${manifest_file}" <<'PY'
@@ -126,7 +138,7 @@ echo "FULL_PHASE2_START optimizer=${OPTIMIZER} rank=${rank}"
     --fineweb-live-source-state-dir "${packed_dir}" \
     --fineweb-live-source-world-size 2 \
     --fineweb-replay-world-size 1 --fineweb-replay-layout concat \
-    --auto-resume --skip-train-reader-state-on-resume \
+    --skip-train-reader-state-on-resume \
     --latest-ckpt-interval 5000
 echo "FULL_8XC_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
 
