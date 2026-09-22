@@ -11,11 +11,11 @@ for artifact in \
     cat "$artifact"
 done
 
-for log in "$output_root"/node-logs/*.log; do
+for log in "$output_root"/node-logs/*-node0.log "$output_root"/node-logs/*-node1.log; do
     [[ -f "$log" ]] || continue
     matches=$(grep -E \
         'NCCL INFO (Using network|NET/|Assigned NET plugin|Bootstrap)|NCCL_(IB|SOCKET)|libnccl-net|InfiniBand|RoCE|mlx[0-9]|Socket NIC' \
-        "$log" || true)
+        -m 200 "$log" || true)
     [[ -n "$matches" ]] || continue
     echo "=== $log ==="
     printf '%s\n' "$matches" | sort -u
