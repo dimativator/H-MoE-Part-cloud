@@ -111,12 +111,32 @@ if [[ "${MODE}" == full ]]; then
         --latest-ckpt-interval 100
     echo "FULL_PHASE1_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
 else
-    latest_checkpoint="${results_dir}/${group}/${experiment}/ckpts/latest/main.pt"
+    latest_dir="${results_dir}/${group}/${experiment}/ckpts/latest"
+    latest_checkpoint="${latest_dir}/main.pt"
+    latest_worker="${latest_dir}/worker_${rank}.pt"
     [[ -s "${latest_checkpoint}" ]] || {
         echo "Missing resume checkpoint ${latest_checkpoint}" >&2
         exit 5
     }
+    [[ -s "${latest_worker}" ]] || {
+        echo "Missing resume worker checkpoint ${latest_worker}" >&2
+        exit 5
+    }
+    reader_resume_mode=$(python scripts/cloud/checkpoint_reader_resume_mode.py "${latest_worker}")
+    case "${reader_resume_mode}" in
+        load) phase2_reader_args=() ;;
+        skip) phase2_reader_args=(--skip-train-reader-state-on-resume) ;;
+        *)
+            echo "Unexpected reader resume mode: ${reader_resume_mode}" >&2
+            exit 6
+            ;;
+    esac
+    echo "PHASE2_READER_RESUME_MODE=${reader_resume_mode} worker=${rank}"
     echo "FULL_PHASE1_SKIPPED optimizer=${OPTIMIZER} rank=${rank} mode=resume"
+fi
+
+if [[ "${MODE}" == full ]]; then
+    phase2_reader_args=(--skip-train-reader-state-on-resume)
 fi
 
 manifest_file="/dev/shm/fineweb_h200_manifest_${label}_${rank}.json"
@@ -138,7 +158,7 @@ echo "FULL_PHASE2_START optimizer=${OPTIMIZER} rank=${rank}"
     --fineweb-live-source-state-dir "${packed_dir}" \
     --fineweb-live-source-world-size 2 \
     --fineweb-replay-world-size 1 --fineweb-replay-layout concat \
-    --skip-train-reader-state-on-resume \
+    "${phase2_reader_args[@]}" \
     --latest-ckpt-interval 5000
 echo "FULL_8XC_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
 
