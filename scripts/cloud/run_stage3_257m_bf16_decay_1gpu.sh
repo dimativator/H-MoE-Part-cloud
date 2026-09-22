@@ -32,6 +32,7 @@ mkdir -p "${results_dir}" "${log_dir}" "${eval_cache_dir}" "${results_dir}/wandb
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 export WANDB_MODE=offline WANDB_DIR="${results_dir}/wandb_offline"
+export PYTHONPATH="${PWD}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 echo GPU_STATUS_BEFORE_LAUNCH
 nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free --format=csv

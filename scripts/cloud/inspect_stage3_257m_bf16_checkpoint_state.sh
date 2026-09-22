@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly results_dir=/home/jovyan/dimativator/stage3_257m_bf16_native_20260921
 readonly group=8xChinchilla_257M_bf16_native_states
+export PYTHONPATH="${PWD}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 python - "${results_dir}/${group}" <<'PY'
 from pathlib import Path
