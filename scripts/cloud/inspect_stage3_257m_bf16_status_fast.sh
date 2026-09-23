@@ -8,6 +8,9 @@ echo "HOST=$(hostname) DATE=$(date --iso-8601=seconds)"
 df -h /home/jovyan /workspace-SR006.nfs3
 
 for optimizer in frugal slim_adam; do
+    if [[ -n "${INSPECT_OPTIMIZER:-}" && "${optimizer}" != "${INSPECT_OPTIMIZER}" ]]; then
+        continue
+    fi
     echo "=== ${optimizer} ==="
     full_log="${log_dir}/257m_${optimizer}_bf16_native_states_8xC_cloud_4gpu_resume_rank0.log"
     if [[ -f "${full_log}" ]]; then
@@ -19,6 +22,11 @@ for optimizer in frugal slim_adam; do
     decay_log="${log_dir}/257m_${optimizer}_bf16_native_states_4xC_decay_cloud_1gpu.log"
     if [[ -f "${decay_log}" ]]; then
         echo "--- DECAY ${decay_log} ---"
+        if [[ "${INSPECT_RAW_DECAY:-0}" == 1 ]]; then
+            stat -c 'DECAY_LOG_SIZE=%s DECAY_LOG_MTIME=%y' "${decay_log}"
+            tail -n 80 "${decay_log}"
+            continue
+        fi
         tail -c 1048576 "${decay_log}" | tr '\r' '\n' | grep -E \
             'DECAY_(START|COMPLETE)|QUEUE_COMPLETE|>Eval:|Training Iteration|Traceback|OutOfMemory|NaN|No space left' \
             | tail -60 || true
