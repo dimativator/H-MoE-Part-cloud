@@ -28,7 +28,12 @@ readonly results_dir=/home/jovyan/dimativator/stage3_257m_bf16_native_20260921
 readonly log_dir="${results_dir}/logs"
 readonly eval_cache_dir=/home/jovyan/evals_cache
 readonly group=8xChinchilla_257M_bf16_native_states
-readonly experiment="257m_${label}_bf16_native_states_8xC_cloud_4gpu"
+readonly experiment_suffix=${EXPERIMENT_SUFFIX:-}
+[[ "${experiment_suffix}" =~ ^[a-zA-Z0-9_-]*$ ]] || {
+    echo "EXPERIMENT_SUFFIX must contain only letters, digits, underscores, or hyphens" >&2
+    exit 2
+}
+readonly experiment="257m_${label}_bf16_native_states_8xC_cloud_4gpu${experiment_suffix}"
 
 rank=${OMPI_COMM_WORLD_RANK:-0}
 world_size=${OMPI_COMM_WORLD_SIZE:-1}
@@ -90,24 +95,40 @@ if [[ "${MODE}" == smoke ]]; then
     echo "BF16_SMOKE_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
     exit 0
 fi
-[[ "${MODE}" == full || "${MODE}" == resume ]] || {
-    echo "MODE must be smoke, full, or resume" >&2
+[[ "${MODE}" == full || "${MODE}" == resume || "${MODE}" == resume_packed ]] || {
+    echo "MODE must be smoke, full, resume, or resume_packed" >&2
     exit 2
 }
 
-if [[ "${MODE}" == full ]]; then
+if [[ "${MODE}" == full || "${MODE}" == resume_packed ]]; then
     for source_rank in 0 1; do
         state_file="${packed_dir}/train_rank${source_rank}.third.state.json"
         [[ -s "${state_file}" ]] || { echo "Missing ${state_file}" >&2; exit 4; }
     done
 
-    echo "FULL_PHASE1_START optimizer=${OPTIMIZER} rank=${rank}"
+    phase1_resume_args=()
+    phase1_inter_args=(--inter-ckpts 35325 70650 141300)
+    if [[ "${MODE}" == resume_packed ]]; then
+        [[ "${OPTIMIZER}" == frugal && -n "${experiment_suffix}" ]] || {
+            echo "resume_packed requires Frugal and a distinct EXPERIMENT_SUFFIX" >&2
+            exit 5
+        }
+        source_checkpoint="${results_dir}/${group}/257m_frugal_bf16_native_states_8xC_cloud_4gpu/ckpts/141300"
+        [[ -s "${source_checkpoint}/main.pt" && -s "${source_checkpoint}/worker_${rank}.pt" ]] || {
+            echo "Missing packed resume checkpoint ${source_checkpoint}" >&2
+            exit 5
+        }
+        phase1_resume_args=(--resume-from "${source_checkpoint}")
+        phase1_inter_args=()
+    fi
+    echo "FULL_PHASE1_START optimizer=${OPTIMIZER} rank=${rank} mode=${MODE}"
     "${launcher[@]}" src/main.py \
         "${common_args[@]}" \
         --datasets-dir "${packed_dir}" \
         --fineweb-replay-world-size 1 --fineweb-replay-layout concat \
+        "${phase1_resume_args[@]}" \
         --early-stop-iteration 157100 \
-        --inter-ckpts 35325 70650 141300 \
+        "${phase1_inter_args[@]}" \
         --latest-ckpt-interval 100
     echo "FULL_PHASE1_COMPLETE optimizer=${OPTIMIZER} rank=${rank}"
 else
@@ -135,7 +156,7 @@ else
     echo "FULL_PHASE1_SKIPPED optimizer=${OPTIMIZER} rank=${rank} mode=resume"
 fi
 
-if [[ "${MODE}" == full ]]; then
+if [[ "${MODE}" == full || "${MODE}" == resume_packed ]]; then
     phase2_reader_args=(--skip-train-reader-state-on-resume)
 fi
 

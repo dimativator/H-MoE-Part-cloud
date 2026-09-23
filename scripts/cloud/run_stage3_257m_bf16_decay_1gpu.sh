@@ -27,6 +27,21 @@ readonly eval_cache_dir=/home/jovyan/evals_cache
 readonly group=8xChinchilla_257M_bf16_native_states
 readonly full_experiment="257m_${label}_bf16_native_states_8xC_cloud_4gpu"
 readonly checkpoint_root="${results_dir}/${group}/${full_experiment}/ckpts"
+readonly start_scale=${START_SCALE:-1}
+readonly run_suffix=${RUN_SUFFIX:-}
+readonly keep_source_checkpoint=${KEEP_SOURCE_CHECKPOINT:-0}
+[[ "${start_scale}" == 1 || "${start_scale}" == 2 || "${start_scale}" == 4 ]] || {
+    echo "START_SCALE must be 1, 2, or 4" >&2
+    exit 2
+}
+[[ "${run_suffix}" =~ ^[a-zA-Z0-9_-]*$ ]] || {
+    echo "RUN_SUFFIX must contain only letters, digits, underscores, or hyphens" >&2
+    exit 2
+}
+[[ "${keep_source_checkpoint}" == 0 || "${keep_source_checkpoint}" == 1 ]] || {
+    echo "KEEP_SOURCE_CHECKPOINT must be 0 or 1" >&2
+    exit 2
+}
 
 mkdir -p "${results_dir}" "${log_dir}" "${eval_cache_dir}" "${results_dir}/wandb_offline"
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
@@ -72,7 +87,7 @@ PY
 run_decay() {
     local scale=$1 start=$2 end=$3
     local checkpoint_dir="${checkpoint_root}/${start}"
-    local experiment="257m_${label}_bf16_native_states_${scale}xC_decay_cloud_1gpu"
+    local experiment="257m_${label}_bf16_native_states_${scale}xC_decay_cloud_1gpu${run_suffix}"
     local log_file="${log_dir}/${experiment}.log"
     wait_for_checkpoint "${start}"
     echo "DECAY_START optimizer=${OPTIMIZER} scale=${scale} start=${start} end=${end}" | tee -a "${log_file}"
@@ -101,6 +116,10 @@ run_decay() {
         --wandb-tags bf16_model native_optimizer_states no_fp8_optim 257M "${label}" "decay_${scale}xc" cloudru 1gpu local_offline \
         >> "${log_file}" 2>&1
     echo "DECAY_COMPLETE optimizer=${OPTIMIZER} scale=${scale} end=${end}" | tee -a "${log_file}"
+    if [[ "${keep_source_checkpoint}" == 1 ]]; then
+        echo "SOURCE_CHECKPOINT_PRESERVED=${start}"
+        return 0
+    fi
     python - "${checkpoint_dir}" "${start}" <<'PY'
 from pathlib import Path
 import shutil
@@ -115,7 +134,11 @@ print(f"SOURCE_CHECKPOINT_REMOVED={expected}")
 PY
 }
 
-run_decay 1 35325 39250
-run_decay 2 70650 78500
+if (( start_scale <= 1 )); then
+    run_decay 1 35325 39250
+fi
+if (( start_scale <= 2 )); then
+    run_decay 2 70650 78500
+fi
 run_decay 4 141300 157000
 echo "DECAY_QUEUE_COMPLETE optimizer=${OPTIMIZER}"
