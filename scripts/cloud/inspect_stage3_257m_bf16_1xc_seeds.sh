@@ -13,6 +13,8 @@ for optimizer in adamw muon; do
             continue
         fi
         stat -c 'log_bytes=%s modified=%y' "${log_file}"
-        grep -E 'SEED_RUN_START|Starting Experiment:|>Eval:|Iter=|SEED_RUN_COMPLETE|Traceback|Error|OOM|OutOfMemory' "${log_file}" | tail -n 8 || true
+        tr '\r' '\n' < "${log_file}" | \
+            grep -E 'SEED_RUN_START|Starting Experiment:|>Eval:|Train: Iter=|SEED_RUN_COMPLETE|Traceback|Error|OOM|OutOfMemory' | \
+            tail -n 8 || true
     done
 done
