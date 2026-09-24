@@ -222,11 +222,35 @@ def test_transformer_engine_fused_adam_wrapper():
 
 
 def test_fused_fp8_adamw_matches_storage_only_reference():
-    from transformer_engine.pytorch.optimizers import FusedAdam
+    class AdamWBase(torch.optim.Optimizer):
+        def __init__(
+            self,
+            params,
+            lr=1e-3,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=0.0,
+            *,
+            bias_correction=True,
+            adam_w_mode=True,
+            **kwargs,
+        ):
+            del kwargs
+            assert adam_w_mode
+            super().__init__(
+                params,
+                {
+                    "lr": lr,
+                    "betas": betas,
+                    "eps": eps,
+                    "weight_decay": weight_decay,
+                    "bias_correction": bias_correction,
+                },
+            )
 
     initial = torch.randn(4099, device="cuda")
     parameter = torch.nn.Parameter(initial.clone())
-    optimizer = make_fused_fp8_adamw(FusedAdam)(
+    optimizer = make_fused_fp8_adamw(AdamWBase)(
         [parameter],
         lr=1e-3,
         betas=(0.9, 0.95),
