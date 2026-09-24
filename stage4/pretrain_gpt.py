@@ -17,7 +17,7 @@ def take_state_precision():
     index = sys.argv.index(flag)
     precision = sys.argv[index + 1]
     del sys.argv[index : index + 2]
-    if precision not in {"fp32", "bfloat16", "fp8"}:
+    if precision not in {"fp32", "bfloat16", "fp8", "fp8_adam_fused"}:
         raise ValueError(f"unsupported optimizer-state precision: {precision}")
     return precision
 
@@ -306,6 +306,12 @@ if precision == "fp8":
     _EMERGING_OPTIMIZERS["soap"].optimizer_cls = make_fp8_soap(
         _EMERGING_OPTIMIZERS["soap"].optimizer_cls
     )
+elif precision == "fp8_adam_fused":
+    import megatron.core.optimizer as mcore_optimizer
+
+    from stage4.fused_fp8_adamw import make_fused_fp8_adamw
+
+    mcore_optimizer.Adam = make_fused_fp8_adamw(mcore_optimizer.Adam)
 
 print(f"stage4 optimizer-state precision: {precision}", flush=True)
 

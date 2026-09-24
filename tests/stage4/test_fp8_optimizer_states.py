@@ -10,6 +10,7 @@ from stage4.fp8_optimizer_states import (
     make_fp8_soap,
     quantize_fp8_state_,
 )
+from stage4.fused_fp8_adamw import make_fused_fp8_adamw
 
 
 def test_quantization_layout_and_error():
@@ -218,6 +219,45 @@ def test_transformer_engine_fused_adam_wrapper():
     for key, value in quantized.state[quantized_parameter].items():
         if torch.is_tensor(value):
             assert torch.equal(value, resumed.state[resumed_parameter][key])
+
+
+def test_fused_fp8_adamw_matches_storage_only_reference():
+    from transformer_engine.pytorch.optimizers import FusedAdam
+
+    initial = torch.randn(4099, device="cuda")
+    parameter = torch.nn.Parameter(initial.clone())
+    optimizer = make_fused_fp8_adamw(FusedAdam)(
+        [parameter],
+        lr=1e-3,
+        betas=(0.9, 0.95),
+        eps=1e-8,
+        weight_decay=0.1,
+        adam_w_mode=True,
+    )
+
+    reference_parameter = initial.clone()
+    reference_m = torch.zeros_like(initial)
+    reference_v = torch.zeros_like(initial)
+    for step in (1, 2):
+        set_gradient(parameter, 20 + step)
+        gradient = parameter.grad.clone()
+        reference_m.mul_(0.9).add_(gradient, alpha=0.1)
+        reference_v.mul_(0.95).addcmul_(gradient, gradient, value=0.05)
+        update = reference_m.div(1.0 - 0.9**step).div(
+            reference_v.div(1.0 - 0.95**step).sqrt().add(1e-8)
+        )
+        reference_parameter.add_(
+            update.add(reference_parameter, alpha=0.1), alpha=-1e-3
+        )
+        optimizer.step()
+
+        state = optimizer.state[parameter]
+        assert state["exp_avg"].dtype == torch.float8_e4m3fn
+        assert state["exp_avg_sq"].dtype == torch.float8_e4m3fn
+        assert torch.allclose(parameter, reference_parameter, atol=2e-6, rtol=2e-6)
+
+        reference_m = state["exp_avg"].float() * state["scale_exp_avg"]
+        reference_v = state["exp_avg_sq"].float() * state["scale_exp_avg_sq"]
 
 
 def test_load_state_dict_does_not_alias_cuda_input():

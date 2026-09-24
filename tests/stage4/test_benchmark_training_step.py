@@ -32,7 +32,7 @@ def test_benchmark_matrix_contains_requested_models_and_optimizers():
     }
 
 
-def test_bf16_adam_fp8_states_uses_native_precision_aware_fused_adam():
+def test_bf16_adam_fp8_states_uses_project_fused_adam():
     command = build_command(
         root=Path("."),
         model_name="500m",
@@ -46,11 +46,11 @@ def test_bf16_adam_fp8_states_uses_native_precision_aware_fused_adam():
     )
 
     assert command[command.index("--optimizer") + 1] == "adam"
-    assert command[command.index("--optimizer-state-precision") + 1] == "fp32"
-    assert "--use-distributed-optimizer" in command
-    assert "--use-precision-aware-optimizer" in command
-    assert command[command.index("--exp-avg-dtype") + 1] == "fp8"
-    assert command[command.index("--exp-avg-sq-dtype") + 1] == "fp8"
+    assert command[command.index("--optimizer-state-precision") + 1] == "fp8_adam_fused"
+    assert "--use-distributed-optimizer" not in command
+    assert "--use-precision-aware-optimizer" not in command
+    assert "--exp-avg-dtype" not in command
+    assert "--exp-avg-sq-dtype" not in command
     assert "--fp8-format" not in command
 
 
