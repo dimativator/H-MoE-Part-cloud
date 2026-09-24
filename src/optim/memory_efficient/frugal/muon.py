@@ -298,6 +298,9 @@ class GaloreMuon(GaloreOptimizer, MuonBase):
         update = self._compute_update(grad_down, state, **{**group, "lr": active_lr})
         update = state["projector"].project_up(update)
 
+        if group["inactive_lr_scale"] == 0:
+            return update
+
         # Stateless Muon on the orthogonal complement (full residual)
         inactive_grad = grad - state["projector"].project_up(grad_down)
         inactive_lr = active_lr * group["inactive_lr_scale"]

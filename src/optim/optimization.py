@@ -484,8 +484,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         )
         optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "galore_muon":
+        pure_projection = args.inactive_lr_scale == 0
+        proj_groups, non_proj_groups = _split_proj_groups(param_groups)
         optimizer = GaloreMuon(
-            frugal_groups,
+            proj_groups if pure_projection else frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap=args.update_gap,
             density=args.density,
@@ -501,7 +503,12 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             epsilon=args.eps,
             weight_decay=args.weight_decay,
         )
-        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
+        if pure_projection and non_proj_groups:
+            optimizer = MultiOptimizer(
+                optimizer, _build_non_proj_optimizer(non_proj_groups, args)
+            )
+        elif not pure_projection:
+            optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "block_muon":
         optimizer = BlockMuon(
             frugal_groups,
