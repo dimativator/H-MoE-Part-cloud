@@ -24,6 +24,7 @@ MODELS = {
 PRECISIONS = ("bf16", "fp8_act", "full_fp8")
 OPTIMIZERS = (
     "adam",
+    "adam_fp8_states",
     "muon",
     "muon_fp8_states",
     "soap",
@@ -35,6 +36,7 @@ OPTIMIZERS = (
     "apollo",
 )
 MUON_OPTIMIZERS = {"muon", "muon_fp8_states", "frugal_muon_muon"}
+NATIVE_FP8_ADAM_OPTIMIZERS = {"adam_fp8_states"}
 DEFAULT_BATCHES = (1, 2, 4, 8, 16, 32)
 SUPPORTED_BATCHES = (*DEFAULT_BATCHES, 64, 128)
 PERIODIC_OPTIMIZERS = {"soap", "galore", "frugal", "frugal_muon_muon", "apollo"}
@@ -94,7 +96,11 @@ def micro_batch_candidates(global_batch, micro_batch_cap, data_parallel_size):
 
 
 def runtime_optimizer(optimizer):
-    return "muon" if optimizer == "muon_fp8_states" else optimizer
+    if optimizer == "muon_fp8_states":
+        return "muon"
+    if optimizer in NATIVE_FP8_ADAM_OPTIMIZERS:
+        return "adam"
+    return optimizer
 
 
 def effective_muon_state_precision(precision, optimizer, requested):
@@ -230,6 +236,7 @@ def build_command(
         precision, optimizer, muon_state_precision
     )
     command_optimizer = runtime_optimizer(optimizer)
+    native_fp8_adam_states = optimizer in NATIVE_FP8_ADAM_OPTIMIZERS
     command = [
         sys.executable,
         "-m",
@@ -241,7 +248,8 @@ def build_command(
         "--optimizer-state-precision",
         (
             "fp8"
-            if precision == "full_fp8" or optimizer_state_precision == "fp8"
+            if not native_fp8_adam_states
+            and (precision == "full_fp8" or optimizer_state_precision == "fp8")
             else "fp32"
         ),
         "--num-layers",
@@ -347,6 +355,17 @@ def build_command(
         "--log-interval",
         "1",
     ]
+    if native_fp8_adam_states:
+        command.extend(
+            [
+                "--use-distributed-optimizer",
+                "--use-precision-aware-optimizer",
+                "--exp-avg-dtype",
+                "fp8",
+                "--exp-avg-sq-dtype",
+                "fp8",
+            ]
+        )
     if precision != "bf16":
         command.extend(
             [

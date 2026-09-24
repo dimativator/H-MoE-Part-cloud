@@ -19,6 +19,7 @@ def test_benchmark_matrix_contains_requested_models_and_optimizers():
     }
     assert set(OPTIMIZERS) == {
         "adam",
+        "adam_fp8_states",
         "muon",
         "muon_fp8_states",
         "soap",
@@ -29,6 +30,28 @@ def test_benchmark_matrix_contains_requested_models_and_optimizers():
         "slim_adam",
         "apollo",
     }
+
+
+def test_bf16_adam_fp8_states_uses_native_precision_aware_fused_adam():
+    command = build_command(
+        root=Path("."),
+        model_name="500m",
+        precision="bf16",
+        optimizer="adam_fp8_states",
+        global_batch=1,
+        micro_batch=1,
+        data_parallel_size=1,
+        warmup=2,
+        measured=2,
+    )
+
+    assert command[command.index("--optimizer") + 1] == "adam"
+    assert command[command.index("--optimizer-state-precision") + 1] == "fp32"
+    assert "--use-distributed-optimizer" in command
+    assert "--use-precision-aware-optimizer" in command
+    assert command[command.index("--exp-avg-dtype") + 1] == "fp8"
+    assert command[command.index("--exp-avg-sq-dtype") + 1] == "fp8"
+    assert "--fp8-format" not in command
 
 
 def test_measurement_window_contains_one_gap_50_update():
