@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${LR:?LR must be one of 1e-4, 5e-4, 1e-2, 2e-3}"
+: "${LR:?LR must be one of 1e-4, 5e-4, 1e-3, 1e-2, 2e-3}"
 case "${LR}" in
-    1e-4|5e-4|1e-2|2e-3) ;;
+    1e-4|5e-4|1e-3|1e-2|2e-3) ;;
     *) echo "Unsupported LR: ${LR}" >&2; exit 2 ;;
 esac
 case "${SMOKE_TEST:-0}" in
