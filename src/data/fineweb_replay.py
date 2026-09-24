@@ -116,6 +116,42 @@ class FineWebReplayTrainReader:
         self.step = int(state["step"])
 
 
+class PermutedFineWebReplayTrainReader:
+    """Read the same packed microsteps in a seed-dependent order."""
+
+    requires_checkpoint_state = False
+
+    def __init__(self, reader: FineWebReplayTrainReader, *, steps: int, seed: int):
+        if steps <= 0:
+            raise ValueError("Packed FineWeb permutation needs a positive step count")
+        if any(source._num_steps < steps for source in reader.readers):
+            raise ValueError("Packed FineWeb has fewer microsteps than the requested run")
+        self.reader = reader
+        self.batch_size = reader.batch_size
+        self.sequence_length = reader.sequence_length
+        self.order = np.random.default_rng(seed).permutation(steps)
+        self.step = 0
+        digest = hashlib.sha256(self.order.astype("<u4").tobytes()).hexdigest()
+        print(
+            f"FINEWEB_PACKED_STEP_PERMUTATION seed={seed} steps={steps} "
+            f"sha256={digest}",
+            flush=True,
+        )
+
+    def set_step(self, step: int) -> None:
+        if step < 0 or step > len(self.order):
+            raise ValueError("Permuted packed FineWeb step is out of range")
+        self.step = step
+
+    def sample_batch(self):
+        if self.step >= len(self.order):
+            raise RuntimeError("Permuted packed FineWeb train reader exhausted")
+        self.reader.set_step(int(self.order[self.step]))
+        batch = self.reader.sample_batch()
+        self.step += 1
+        return batch
+
+
 class FineWebSerialReplayTrainReader:
     """Replay source ranks round-robin while preserving the run batch size."""
 

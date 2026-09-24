@@ -218,6 +218,14 @@ def parse_args(base_parser, args, namespace):
         ),
     )
     parser.add_argument(
+        "--fineweb-packed-shuffle-steps",
+        action="store_true",
+        help=(
+            "Permute the fixed packed FineWeb training microsteps using --data-seed. "
+            "Requires single-process concat replay and --no-local-save."
+        ),
+    )
+    parser.add_argument(
         "--fineweb-live-source-state-dir",
         type=str,
         default=None,

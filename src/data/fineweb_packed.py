@@ -13,6 +13,7 @@ from .fineweb import FineWebValReader
 from .fineweb_replay import (
     FineWebReplayTrainReader,
     FineWebSerialReplayTrainReader,
+    PermutedFineWebReplayTrainReader,
     blocks_sha256,
 )
 
@@ -327,7 +328,19 @@ def build_packed_fineweb_readers(args, *, rank: int, world_size: int):
             batch_size=args.batch_size,
             sequence_length=args.sequence_length,
         )
+        if getattr(args, "fineweb_packed_shuffle_steps", False):
+            if replay_layout != "concat" or not args.no_local_save:
+                raise ValueError(
+                    "Packed step shuffle requires concat replay and --no-local-save"
+                )
+            train_reader = PermutedFineWebReplayTrainReader(
+                train_reader,
+                steps=args.iterations * args.acc_steps,
+                seed=args.data_seed,
+            )
     elif world_size == int(metadata["world_size"]):
+        if getattr(args, "fineweb_packed_shuffle_steps", False):
+            raise ValueError("Packed step shuffle requires single-process replay")
         train_reader = PackedFineWebTrainReader(
             root,
             metadata,
@@ -337,6 +350,8 @@ def build_packed_fineweb_readers(args, *, rank: int, world_size: int):
             sequence_length=args.sequence_length,
         )
     else:
+        if getattr(args, "fineweb_packed_shuffle_steps", False):
+            raise ValueError("Packed step shuffle requires single-process replay")
         train_reader = PackedFineWebShardedTrainReader(
             root,
             metadata,

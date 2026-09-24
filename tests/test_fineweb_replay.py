@@ -23,6 +23,7 @@ from src.data.fineweb_packed import (
 from src.data.fineweb_replay import (
     FineWebReplayTrainReader,
     FineWebSerialReplayTrainReader,
+    PermutedFineWebReplayTrainReader,
     blocks_sha256,
 )
 from src.distributed.ddp import DataParallelDistributedBackend
@@ -113,6 +114,30 @@ class FineWebReplayTrainReaderTest(unittest.TestCase):
         )
         torch.testing.assert_close(restored_x, expected_next[:, :-1])
         torch.testing.assert_close(restored_y, expected_next[:, 1:])
+
+    def test_seeded_permutation_preserves_exact_batches(self):
+        rank_blocks = [
+            np.asarray([[rank * 100 + index, 2, 3] for index in range(12)])
+            for rank in range(2)
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def sequence(seed: int | None) -> list[tuple[int, ...]]:
+                reader = self._build_reader(root, rank_blocks)
+                if seed is not None:
+                    reader = PermutedFineWebReplayTrainReader(
+                        reader, steps=6, seed=seed
+                    )
+                return [tuple(reader.sample_batch()[0][:, 0].tolist()) for _ in range(6)]
+
+            baseline = sequence(None)
+            first = sequence(1)
+            second = sequence(2)
+
+        self.assertCountEqual(first, baseline)
+        self.assertCountEqual(second, baseline)
+        self.assertNotEqual(first, second)
 
 
 class FineWebSerialReplayTrainReaderTest(FineWebReplayTrainReaderTest):

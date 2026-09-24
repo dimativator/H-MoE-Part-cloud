@@ -766,6 +766,8 @@ def eval_and_log(
         f"val_pp={val_perplexity:.3f} "
         f"val_acc={val_acc:3f}"
     )
+    if curr_iter == cfg.iterations:
+        print(f"FINAL_VAL_LOSS_EXACT iter={curr_iter} value={val_loss:.9f}")
 
     if cfg.wandb:
         if curr_iter == cfg.iterations or full_eval:
