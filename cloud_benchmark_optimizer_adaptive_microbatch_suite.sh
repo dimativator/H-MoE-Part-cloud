@@ -8,7 +8,7 @@ fi
 root=$(cd "$(dirname "$0")" && pwd)
 group=${OPTIMIZER_SUITE_GROUP:?OPTIMIZER_SUITE_GROUP must be A, B, or C}
 output_root=${BENCHMARK_OUTPUT_ROOT:-/home/jovyan/hmoe-cloud/bf16-optimizer-adaptive-microbatch-step-50}
-optimizers=adam,muon,muon_fp8_states,soap,ademamix,galore,frugal,frugal_muon_muon,slim_adam,apollo
+optimizers=adam,adam_fp8_states,muon,muon_fp8_states,soap,ademamix,galore,frugal,frugal_muon_muon,slim_adam,apollo
 
 run_models() {
     local models=$1
