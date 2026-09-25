@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -19,6 +20,10 @@ def main() -> None:
     import yaml
 
     print(f"ROOT={ROOT} exists={ROOT.is_dir()}")
+    help_result = subprocess.run(
+        ["wandb", "sync", "--help"], capture_output=True, text=True, check=False
+    )
+    print("WANDB_SYNC_HELP=" + json.dumps(help_result.stdout.splitlines()[:80]))
     for run_file in sorted(ROOT.rglob("run-*.wandb")):
         run_dir = run_file.parent
         config_file = run_dir / "files" / "config.yaml"
@@ -37,6 +42,8 @@ def main() -> None:
             "wandb_project": config_value(config, "wandb_project"),
             "wandb_group": config_value(config, "wandb_group"),
             "args_experiment_name": experiment_arg,
+            "files": sorted(path.name for path in (run_dir / "files").glob("*")) if (run_dir / "files").is_dir() else [],
+            "metadata_args": args[:10],
         }, sort_keys=True))
 
 
