@@ -9,6 +9,18 @@ date --iso-8601=seconds
 df -h /home/jovyan /workspace-SR006.nfs3
 if [[ -f "${DATASETS_DIR}/packed_metadata.json" ]]; then
     echo "PACKED_FINEWEB=present"
+    python - "${DATASETS_DIR}/packed_metadata.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    metadata = json.load(source)
+for key in (
+    "format", "world_size", "batch_size", "sequence_length",
+    "manifest_fingerprint", "split_plan_fingerprint", "validation_blocks_sha256",
+):
+    print(f"PACKED_{key.upper()}={metadata.get(key)}")
+PY
 else
     echo "PACKED_FINEWEB=missing"
 fi
