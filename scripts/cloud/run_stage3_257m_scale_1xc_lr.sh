@@ -59,7 +59,7 @@ if [[ -n "${early_stop}" ]]; then extra_args=(--early-stop-iteration "${early_st
     --experiment-name "${experiment}" \
     --seed 0 --data-seed 1337 \
     --dataset fineweb --datasets-dir "${packed_dir}" \
-    --fineweb-replay-world-size 2 --fineweb-replay-layout concat \
+    --fineweb-replay-world-size 1 --fineweb-replay-layout concat \
     --eval-cache-dir "${eval_cache_dir}" \
     --sequence-length 1024 --streaming --workers 8 \
     --model llama --n-layer 12 --n-embd 1024 --n-head 8 --multiple-of 256 \
@@ -68,7 +68,7 @@ if [[ -n "${early_stop}" ]]; then extra_args=(--early-stop-iteration "${early_st
     --beta1 0.9 --beta2 0.99 --grad-clip 1.0 \
     --scheduler wsd --wsd-final-lr-scale 0 --wsd-fract-decay 0.1 --decay-type cosine \
     --iterations "${iterations}" --warmup-steps "${warmup_steps}" \
-    --batch-size 16 --eval-batch-size 16 --acc-steps 4 \
+    --batch-size 16 --eval-batch-size 16 --acc-steps 8 \
     --eval-interval 500 --eval-batches 64 \
     --downstream-eval-enabled --downstream-eval-interval 2000 \
     --downstream-task-group basic_v2 \
