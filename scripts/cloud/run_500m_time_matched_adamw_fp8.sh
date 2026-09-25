@@ -123,7 +123,7 @@ else
     )
 fi
 
-"${PYTHON_BIN}" src/main.py \
+"$(command -v torchrun)" --standalone --nproc_per_node=1 src/main.py \
     --distributed-backend nccl \
     --experiment-name "${EXPERIMENT_NAME}" \
     --seed 0 --data-seed 1337 \
