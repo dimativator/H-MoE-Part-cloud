@@ -68,8 +68,10 @@ class SCALE(torch.optim.Optimizer):
         )
         self.max_lr = lr
         self._embedding = embedding
-        for param, kind in types.items():
-            self.state[param]["param_type"] = kind
+        # PyTorch casts iterable state values when loading an optimizer checkpoint;
+        # an upstream string "param_type" becomes a generator. Rebuild this fixed
+        # model-derived classification on construction instead of serializing it.
+        self._types = types
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -91,7 +93,7 @@ class SCALE(torch.optim.Optimizer):
                 if grad is None:
                     continue
                 state = self.state[param]
-                kind = state["param_type"]
+                kind = self._types[param]
                 if kind == "oned_param":
                     if "step" not in state:
                         state["step"] = 0

@@ -1,6 +1,13 @@
+import importlib.util
+from pathlib import Path
+
 import torch
 
-from optim.memory_efficient.scale import SCALE
+module_path = Path(__file__).resolve().parents[1] / "src/optim/memory_efficient/scale.py"
+spec = importlib.util.spec_from_file_location("scale_optimizer", module_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+SCALE = module.SCALE
 
 
 class TinyModel(torch.nn.Module):
@@ -23,10 +30,10 @@ def test_scale_partition_and_update():
     before = {name: param.detach().clone() for name, param in names.items()}
     optimizer.step()
 
-    assert optimizer.state[names["transformer.wte.weight"]]["param_type"] == "main_param"
-    assert optimizer.state[names["transformer.attn.q_proj.weight"]]["param_type"] == "main_param"
-    assert optimizer.state[names["lm_head.weight"]]["param_type"] == "secondary_param"
-    assert optimizer.state[names["transformer.ln_f.weight"]]["param_type"] == "oned_param"
+    assert optimizer._types[names["transformer.wte.weight"]] == "main_param"
+    assert optimizer._types[names["transformer.attn.q_proj.weight"]] == "main_param"
+    assert optimizer._types[names["lm_head.weight"]] == "secondary_param"
+    assert optimizer._types[names["transformer.ln_f.weight"]] == "oned_param"
     for name, param in names.items():
         torch.testing.assert_close(param, before[name] - 0.1)
     assert "moment1" not in optimizer.state[names["transformer.attn.q_proj.weight"]]
@@ -43,7 +50,7 @@ def test_scale_checkpoint_restores_momenta():
     checkpoint = optimizer.state_dict()
     restored = SCALE(model.named_parameters(), lr=0.01, weight_decay=0.1)
     restored.load_state_dict(checkpoint)
-    assert restored.state[model.lm_head.weight]["param_type"] == "secondary_param"
+    assert restored._types[model.lm_head.weight] == "secondary_param"
     torch.testing.assert_close(
         restored.state[model.lm_head.weight]["moment1"],
         optimizer.state[model.lm_head.weight]["moment1"],
