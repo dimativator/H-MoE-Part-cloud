@@ -10,6 +10,7 @@ from .memory_efficient.sumo import SUMO
 from .memory_efficient.badam import BlockOptimizer, BlockOptimizerRatio
 from .memory_efficient.adam_mini import Adam_mini
 from .memory_efficient.slim_adam import SlimAdamW
+from .memory_efficient.scale import SCALE
 from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFAULT_LAYER_MAP
 from .memory_efficient.fp8_slim_adam import FP8SlimAdamW
 from .memory_efficient.lora import LoRAOptimizer
@@ -123,6 +124,16 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         optimizer = torch.optim.Adam(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)#, foreach=False, fused=False)
     elif optimizer_name == "adamw":
         optimizer = torch.optim.AdamW(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)#, foreach=False, fused=False)
+    elif optimizer_name == "scale":
+        raw_model = model.module if hasattr(model, "module") else model
+        optimizer = SCALE(
+            raw_model.named_parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            momentum=args.momentum,
+            adamw_betas=(args.beta1, args.beta2),
+            adamw_eps=args.eps,
+        )
     elif optimizer_name == "ademamix":
         optimizer_cls = FP8AdEMAMix if getattr(args, "fp8_optim", False) else AdEMAMix
         optimizer_kwargs = dict(

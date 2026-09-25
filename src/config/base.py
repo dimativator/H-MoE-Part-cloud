@@ -162,6 +162,7 @@ def parse_args(base_parser, args, namespace):
             "badam",  # BAdam: Block-wise Adam
             "adam_mini",  # Adam-mini: memory-efficient Adam with per-block learning rates
             "slim_adam",  # SlimAdam: memory-efficient Adam with compressed second moments
+            "scale",  # SCALE: column-normalized updates with last-layer momentum
             "riemannian_adamw",  # Riemannian Adam on Stiefel manifold (LoRA factors)
             "riemannian_sgd",   # Riemannian SGD on Stiefel manifold (LoRA factors)
             "hybrid_lora",      # Full-weight (stateless) + LoRA adapter (stateful) hybrid
