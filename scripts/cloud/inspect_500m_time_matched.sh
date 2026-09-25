@@ -23,13 +23,22 @@ for optimizer in slim_adam frugal adamw; do
     echo "OPTIMIZER=${optimizer}"
     if [[ "${optimizer}" == adamw ]]; then
         log=${root}/logs/${experiment}_full.log
+        smoke_log=${root}/logs/${experiment}_smoke.log
+        if [[ -f "${smoke_log}" ]]; then
+            echo "SMOKE_LOG=${smoke_log}"
+            tr '\r' '\n' < "${smoke_log}" |
+                grep -E 'RUN_START|REPAIRED_SOURCE_AUDIT_OK|ENVIRONMENT_CHECK|Train: Iter=|Eval: Iter=|TIME_MATCHED_|Traceback|Error|RuntimeError' |
+                tail -n 14 || true
+        fi
     else
         log=${root}/logs/${experiment}_rank0.log
     fi
     metrics=${root}/${group}/${experiment}/metrics.jsonl
     if [[ -f "${log}" ]]; then
         echo "LOG=${log}"
-        tail -n 28 "${log}"
+        tr '\r' '\n' < "${log}" |
+            grep -E 'RUN_START|ENVIRONMENT_CHECK|Train: Iter=|Eval: Iter=|TIME_MATCHED_|Traceback|Error|RuntimeError' |
+            tail -n 14 || true
     else
         echo "LOG=missing"
     fi
