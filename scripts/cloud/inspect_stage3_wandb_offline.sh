@@ -14,9 +14,7 @@ for root in "${roots[@]}"; do
         echo "WANDB_ROOT_MISSING=${root}"
         continue
     fi
-    shopt -s nullglob
-    for run_dir in "${root}"/offline-run-*; do
-        [[ -d "${run_dir}" ]] || continue
+    while IFS= read -r run_dir; do
         run_id=${run_dir##*-}
         synced=false
         [[ -e "${run_dir}/.synced" ]] && synced=true
@@ -25,7 +23,7 @@ for root in "${roots[@]}"; do
             grep -E '^(experiment_name|wandb_group|group|opt|lr):' "${run_dir}/files/config.yaml" | head -n 8 || true
         fi
         find "${run_dir}" -maxdepth 1 -type f -name '*.wandb' -printf 'WANDB_FILE=%f BYTES=%s\n'
-    done
+    done < <(find "${root}" -maxdepth 3 -type d -name 'offline-run-*' -print | sort)
 done
 
 if [[ -n "${WANDB_API_KEY:-}" || -r "${HOME}/.netrc" || -r /home/jovyan/.netrc ]]; then
