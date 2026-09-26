@@ -101,7 +101,7 @@ COMMON_ARGS=(
     --dtype bfloat16
     --opt slim_adam --lr 5e-4 --weight-decay "${WEIGHT_DECAY}"
     --beta1 0.9 --beta2 0.99 --grad-clip 1.0
-    --batch-size 8 --acc-steps 16 --eval-batch-size 32
+    --batch-size 16 --acc-steps 8 --eval-batch-size 32
     --results-base-folder "${RESULTS_DIR}"
 )
 
