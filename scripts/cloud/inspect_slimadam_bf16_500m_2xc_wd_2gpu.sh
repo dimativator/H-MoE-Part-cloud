@@ -28,6 +28,28 @@ for wd in 1e-2 1e-3 1e-4; do
         if [[ -f "${metrics}" ]]; then
             echo "METRICS=${metrics} LINES=$(wc -l < "${metrics}")"
             tail -n 3 "${metrics}"
+            python - "${metrics}" "${wd}" "${spec}" <<'PY'
+import json
+import sys
+
+metrics, wd, spec = sys.argv[1:]
+points = {}
+with open(metrics, encoding="utf-8") as source:
+    for line in source:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # A training process may still be appending its final line.
+        step = row.get("iter")
+        loss = row.get("val/loss")
+        if isinstance(step, int) and isinstance(loss, (int, float)):
+            points[step] = loss
+print("CURVE_JSON=" + json.dumps({
+    "wd": wd,
+    "phase": "decay" if "decay" in spec else "trunk",
+    "points": sorted(points.items()),
+}, separators=(",", ":")))
+PY
         else
             echo "METRICS=${metrics} missing"
         fi
