@@ -8,7 +8,7 @@ group=2xChinchilla_500M_slimadam_bf16_wd_sweep_2gpu_cloud
 decay_group=1xChinchilla_decay_500M_slimadam_bf16_wd_sweep_2gpu_cloud
 for wd in 1e-2 1e-3 1e-4; do
     if [[ "${wd}" == 1e-4 ]]; then
-        root=/workspace-SR006.nfs2/dimativator/500m-slimadam-bf16-wd-2xc-warmup2000-20260926
+        root=/workspace-SR006.nfs3/dimativator/500m-slimadam-bf16-wd-2xc-warmup2000-20260926
     else
         root=/home/jovyan/dimativator/500m-slimadam-bf16-wd-2xc-warmup2000-20260926
     fi
