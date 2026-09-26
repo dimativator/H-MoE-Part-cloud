@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Three independent WD jobs: 2xC trunk, then 1xC decay from step 67911.
+# Three independent WD jobs with 2000 warmup steps: 2xC trunk, then 1xC decay from step 67911.
 WEIGHT_DECAY=${WEIGHT_DECAY:?Set WEIGHT_DECAY to 1e-2, 1e-3, or 1e-4}
 case "${WEIGHT_DECAY}" in
     1e-2|1e-3|1e-4) ;;
@@ -19,8 +19,8 @@ RESULTS_DIR=${RESULTS_DIR:?Set RESULTS_DIR to a dedicated experiment directory}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 TRUNK_GROUP=2xChinchilla_500M_slimadam_bf16_wd_sweep_2gpu_cloud
 DECAY_GROUP=1xChinchilla_decay_500M_slimadam_bf16_wd_sweep_2gpu_cloud
-TRUNK_NAME=llama500M_slim_adam_bf16_wd${WEIGHT_DECAY}_2xC_2gpu
-DECAY_NAME=llama500M_slim_adam_bf16_wd${WEIGHT_DECAY}_1xC_decay_2gpu
+TRUNK_NAME=llama500M_slim_adam_bf16_wd${WEIGHT_DECAY}_2xC_warmup2000_2gpu
+DECAY_NAME=llama500M_slim_adam_bf16_wd${WEIGHT_DECAY}_1xC_decay_warmup2000_2gpu
 TRUNK_DIR=${RESULTS_DIR}/${TRUNK_GROUP}/${TRUNK_NAME}
 DECAY_DIR=${RESULTS_DIR}/${DECAY_GROUP}/${DECAY_NAME}
 SOURCE_CKPT=${TRUNK_DIR}/ckpts/67911
@@ -39,7 +39,7 @@ fi
 
 mkdir -p "${RESULTS_DIR}/logs" "${RESULTS_DIR}/wandb" "${EVAL_CACHE_DIR}"
 exec > >(tee -a "${RESULTS_DIR}/logs/${TRUNK_NAME}_${MODE}_rank${MPI_RANK}.log") 2>&1
-echo "RUN_START=$(date --iso-8601=seconds) MODE=${MODE} WD=${WEIGHT_DECAY} RANK=${MPI_RANK}/${MPI_SIZE}"
+echo "RUN_START=$(date --iso-8601=seconds) MODE=${MODE} WD=${WEIGHT_DECAY} WARMUP_STEPS=2000 RANK=${MPI_RANK}/${MPI_SIZE}"
 echo "RESULTS_DIR=${RESULTS_DIR} DATASETS_DIR=${DATASETS_DIR}"
 df -h "${RESULTS_DIR}" /home/jovyan /workspace-SR006.nfs2 /workspace-SR006.nfs3
 nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv
@@ -124,7 +124,7 @@ fi
 "${TRAIN_LAUNCHER[@]}" src/main.py \
     "${COMMON_ARGS[@]}" \
     --experiment-name "${TRUNK_NAME}" \
-    --scheduler wsd --warmup-steps 7000 --iterations 150914 \
+    --scheduler wsd --warmup-steps 2000 --iterations 150914 \
     --wsd-fract-decay 0.1 --wsd-final-lr-scale 0 --decay-type cosine \
     --eval-interval 500 --eval-batches 32 --log-interval 50 \
     --downstream-eval-enabled --downstream-eval-interval 2000 \
@@ -132,7 +132,7 @@ fi
     --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
     --inter-ckpts 67911 --latest-ckpt-interval 0 \
     --wandb --wandb-project fp8-pretrain --wandb-group "${TRUNK_GROUP}" \
-    --wandb-tags fineweb bf16 native_states 2xChinchilla 500M slim_adam wd_sweep \
+    --wandb-tags fineweb bf16 native_states 2xChinchilla 500M slim_adam wd_sweep warmup2000 \
     --metrics-jsonl "${TRUNK_DIR}/metrics.jsonl"
 
 for required in main.pt worker_0.pt worker_1.pt; do
@@ -158,7 +158,7 @@ fi
     --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
     --latest-ckpt-interval 0 --no-local-save \
     --wandb --wandb-project fp8-pretrain --wandb-group "${DECAY_GROUP}" \
-    --wandb-tags fineweb bf16 native_states 1xChinchilla decay 500M slim_adam wd_sweep \
+    --wandb-tags fineweb bf16 native_states 1xChinchilla decay 500M slim_adam wd_sweep warmup2000 \
     --metrics-jsonl "${DECAY_DIR}/metrics.jsonl"
 
 if (( MPI_RANK == 0 )); then

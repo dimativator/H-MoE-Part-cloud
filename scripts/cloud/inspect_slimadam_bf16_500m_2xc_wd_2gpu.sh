@@ -8,12 +8,12 @@ group=2xChinchilla_500M_slimadam_bf16_wd_sweep_2gpu_cloud
 decay_group=1xChinchilla_decay_500M_slimadam_bf16_wd_sweep_2gpu_cloud
 for wd in 1e-2 1e-3 1e-4; do
     if [[ "${wd}" == 1e-4 ]]; then
-        root=/workspace-SR006.nfs2/dimativator/500m-slimadam-bf16-wd-2xc-20260926
+        root=/workspace-SR006.nfs2/dimativator/500m-slimadam-bf16-wd-2xc-warmup2000-20260926
     else
-        root=/home/jovyan/dimativator/500m-slimadam-bf16-wd-2xc-20260926
+        root=/home/jovyan/dimativator/500m-slimadam-bf16-wd-2xc-warmup2000-20260926
     fi
-    trunk=llama500M_slim_adam_bf16_wd${wd}_2xC_2gpu
-    decay=llama500M_slim_adam_bf16_wd${wd}_1xC_decay_2gpu
+    trunk=llama500M_slim_adam_bf16_wd${wd}_2xC_warmup2000_2gpu
+    decay=llama500M_slim_adam_bf16_wd${wd}_1xC_decay_warmup2000_2gpu
     echo "WD=${wd} ROOT=${root}"
     log=${root}/logs/${trunk}_full_rank0.log
     if [[ -f "${log}" ]]; then
