@@ -39,9 +39,10 @@ for wd in 1e-2 1e-3 1e-4; do
     checkpoint_dirs+=("${ckpt}")
     echo "CHECKPOINT wd=${wd} path=${ckpt} bytes=$(du -sb "${ckpt}" | cut -f1)"
 
-    matches=("${root}"/wandb/offline-run-*)
+    mapfile -d '' -t matches < <(find "${root}/wandb" -maxdepth 3 -type d -name 'offline-run-*' -print0)
     matched=0
     for run_dir in "${matches[@]}"; do
+        echo "WANDB_CANDIDATE=${run_dir}"
         [[ -f ${run_dir}/files/config.yaml ]] || continue
         if grep -Fq "${trunk}" "${run_dir}/files/config.yaml" ||
            grep -Fq "${decay}" "${run_dir}/files/config.yaml"; then
