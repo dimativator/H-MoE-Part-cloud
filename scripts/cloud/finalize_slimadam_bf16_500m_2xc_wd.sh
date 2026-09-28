@@ -53,8 +53,7 @@ for wd in 1e-2 1e-3 1e-4; do
             [[ -s ${run_dir}/run-${run_id}.wandb ]]
             offline_runs+=("${run_dir}")
             matched=$((matched + 1))
-            echo "OFFLINE_RUN wd=${wd} id=${run_id} synced=$([[ -e ${run_dir}/.synced ]] && echo true || echo false) path=${run_dir}"
-            find "${run_dir}" -maxdepth 1 -type f -printf 'WANDB_ROOT_FILE=%f\n'
+            echo "OFFLINE_RUN wd=${wd} id=${run_id} synced=$([[ -e ${run_dir}/run-${run_id}.wandb.synced ]] && echo true || echo false) path=${run_dir}"
         done
         [[ ${matched} -eq 1 ]] || { echo "Expected one offline directory for ${run_id}; found ${matched}" >&2; exit 3; }
     done
@@ -68,11 +67,11 @@ if [[ ${MODE} == sync ]]; then
     export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey
     for run_dir in "${offline_runs[@]}"; do
         run_id=${run_dir##*-}
-        if [[ -e ${run_dir}/.synced ]]; then
+        if [[ -e ${run_dir}/run-${run_id}.wandb.synced ]]; then
             echo "SYNC_ALREADY_DONE id=${run_id}"
         else
             wandb sync --entity andrey --project fp8-pretrain --mark-synced "${run_dir}"
-            [[ -e ${run_dir}/.synced ]]
+            [[ -e ${run_dir}/run-${run_id}.wandb.synced ]]
             echo "SYNC_DONE id=${run_id}"
         fi
         echo "SYNC_LINK=https://wandb-radfan.ru/andrey/fp8-pretrain/runs/${run_id}"
@@ -81,7 +80,8 @@ if [[ ${MODE} == sync ]]; then
 elif [[ ${MODE} == cleanup ]]; then
     [[ ${CONFIRM_WANDB_VERIFIED:-} == yes ]] || { echo 'Remote W&B verification required' >&2; exit 4; }
     for run_dir in "${offline_runs[@]}"; do
-        [[ -e ${run_dir}/.synced ]]
+        run_id=${run_dir##*-}
+        [[ -e ${run_dir}/run-${run_id}.wandb.synced ]]
     done
     for ckpt in "${checkpoint_dirs[@]}"; do
         echo "DELETE_CHECKPOINT=${ckpt}"
