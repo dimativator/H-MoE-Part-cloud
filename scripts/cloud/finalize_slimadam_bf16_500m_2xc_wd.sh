@@ -40,24 +40,23 @@ for wd in 1e-2 1e-3 1e-4; do
     echo "CHECKPOINT wd=${wd} path=${ckpt} bytes=$(du -sb "${ckpt}" | cut -f1)"
 
     mapfile -d '' -t matches < <(find "${root}/wandb" -maxdepth 3 -type d -name 'offline-run-*' -print0)
-    matched=0
-    for run_dir in "${matches[@]}"; do
-        echo "WANDB_CANDIDATE=${run_dir}"
-        if [[ ! -f ${run_dir}/files/config.yaml ]]; then
-            find "${run_dir}" -maxdepth 2 -type f -printf 'WANDB_CANDIDATE_FILE=%P\n' | head -n 8
-            continue
-        fi
-        echo "CONFIG_MATCH_TRUNK=$(grep -Fc "${trunk}" "${run_dir}/files/config.yaml" || true) CONFIG_MATCH_DECAY=$(grep -Fc "${decay}" "${run_dir}/files/config.yaml" || true)"
-        if grep -Fq "${trunk}" "${run_dir}/files/config.yaml" ||
-           grep -Fq "${decay}" "${run_dir}/files/config.yaml"; then
-            run_id=${run_dir##*-}
+    mapfile -t log_run_ids < <(
+        grep -oE 'offline-run-[0-9_]+-[a-z0-9]+' "${log}" |
+        sed 's/.*-//' | awk '!seen[$0]++'
+    )
+    echo "LOG_OFFLINE_IDS wd=${wd} ids=${log_run_ids[*]:-none}"
+    [[ ${#log_run_ids[@]} -eq 2 ]] || { echo "Expected two offline run IDs in ${log}" >&2; exit 3; }
+    for run_id in "${log_run_ids[@]}"; do
+        matched=0
+        for run_dir in "${matches[@]}"; do
+            [[ ${run_dir##*-} == "${run_id}" ]] || continue
             [[ -s ${run_dir}/run-${run_id}.wandb ]]
             offline_runs+=("${run_dir}")
             matched=$((matched + 1))
             echo "OFFLINE_RUN wd=${wd} id=${run_id} synced=$([[ -e ${run_dir}/.synced ]] && echo true || echo false) path=${run_dir}"
-        fi
+        done
+        [[ ${matched} -eq 1 ]] || { echo "Expected one offline directory for ${run_id}; found ${matched}" >&2; exit 3; }
     done
-    [[ ${matched} -eq 2 ]] || { echo "Expected two offline runs for ${wd}; found ${matched}" >&2; exit 3; }
 done
 [[ ${#offline_runs[@]} -eq 6 && ${#checkpoint_dirs[@]} -eq 3 ]]
 echo "AUDIT_OK offline_runs=6 checkpoints=3"
