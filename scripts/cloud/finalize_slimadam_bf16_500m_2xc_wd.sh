@@ -54,6 +54,7 @@ for wd in 1e-2 1e-3 1e-4; do
             offline_runs+=("${run_dir}")
             matched=$((matched + 1))
             echo "OFFLINE_RUN wd=${wd} id=${run_id} synced=$([[ -e ${run_dir}/.synced ]] && echo true || echo false) path=${run_dir}"
+            find "${run_dir}" -maxdepth 1 -type f -printf 'WANDB_ROOT_FILE=%f\n'
         done
         [[ ${matched} -eq 1 ]] || { echo "Expected one offline directory for ${run_id}; found ${matched}" >&2; exit 3; }
     done
