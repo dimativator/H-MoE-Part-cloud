@@ -43,7 +43,11 @@ for wd in 1e-2 1e-3 1e-4; do
     matched=0
     for run_dir in "${matches[@]}"; do
         echo "WANDB_CANDIDATE=${run_dir}"
-        [[ -f ${run_dir}/files/config.yaml ]] || continue
+        if [[ ! -f ${run_dir}/files/config.yaml ]]; then
+            find "${run_dir}" -maxdepth 2 -type f -printf 'WANDB_CANDIDATE_FILE=%P\n' | head -n 8
+            continue
+        fi
+        echo "CONFIG_MATCH_TRUNK=$(grep -Fc "${trunk}" "${run_dir}/files/config.yaml" || true) CONFIG_MATCH_DECAY=$(grep -Fc "${decay}" "${run_dir}/files/config.yaml" || true)"
         if grep -Fq "${trunk}" "${run_dir}/files/config.yaml" ||
            grep -Fq "${decay}" "${run_dir}/files/config.yaml"; then
             run_id=${run_dir##*-}
