@@ -50,7 +50,7 @@ print('ENVIRONMENT_AND_DATA_CHECK=ok', flush=True)
 PY
 
 if [[ "${MODE}" == full ]]; then
-    [[ -n "${BRAIN_LAB_RELAY_KEY_B64:-}" ]] || { echo 'Missing relay credential' >&2; exit 3; }
+    [[ -n "${BRAIN_LAB_RELAY_KEY_B64:-}${BRAIN_LAB_RELAY_KEY_B64_0:-}" ]] || { echo 'Missing relay credential' >&2; exit 3; }
     available_bytes=$(df -B1 --output=avail "${RESULTS_DIR}" | tail -n 1 | tr -d ' ')
     (( available_bytes >= 6500000000 )) || { echo "Insufficient checkpoint space: ${available_bytes}" >&2; exit 4; }
 fi

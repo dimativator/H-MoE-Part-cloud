@@ -43,7 +43,10 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.remote_name):
         raise ValueError("Unsafe remote checkpoint name")
-    secret = os.environ.get("BRAIN_LAB_RELAY_KEY_B64")
+    secret = os.environ.get("BRAIN_LAB_RELAY_KEY_B64") or "".join(
+        os.environ.get(f"BRAIN_LAB_RELAY_KEY_B64_{index}", "")
+        for index in range(3)
+    )
     if not secret:
         raise RuntimeError("BRAIN_LAB_RELAY_KEY_B64 is required")
 
