@@ -8,6 +8,7 @@ import torch
 
 from third_party.coat.utils._fp8_quantization_config import QuantizationConfig
 from optim.memory_efficient.fp8_slim_adam import FP8SlimAdamW
+from optim.memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH
 
 qargs = QuantizationConfig(
     quantize_model="none", first_order_bit="E4M3", second_order_bit="E4M3",
@@ -15,8 +16,9 @@ qargs = QuantizationConfig(
 )
 parameter = torch.nn.Parameter(torch.arange(16, dtype=torch.float32).reshape(4, 4) / 10)
 optimizer = FP8SlimAdamW(
-    [("weight", parameter)], qargs=qargs, lr=5e-4, betas=(0.9, 0.99),
-    eps=1e-8, weight_decay=1e-4, layer_map_path=None, verbose=False,
+    [("transformer.h.0.mlp.w12.weight", parameter)],
+    qargs=qargs, lr=5e-4, betas=(0.9, 0.99),
+    eps=1e-8, weight_decay=1e-4, layer_map_path=DEFAULT_LAYER_MAP_PATH, verbose=False,
 )
 for _ in range(3):
     parameter.grad = torch.full_like(parameter, 0.1)
@@ -24,13 +26,15 @@ for _ in range(3):
 state = optimizer.state[parameter]
 assert state["mu"].dtype == torch.float8_e4m3fn
 assert state["nu"].dtype == torch.float8_e4m3fn
+assert state["nu"].shape == (1, 4)
 assert torch.isfinite(parameter).all()
 buffer = io.BytesIO()
 torch.save(optimizer.state_dict(), buffer)
 buffer.seek(0)
 restored = FP8SlimAdamW(
-    [("weight", parameter)], qargs=qargs, lr=5e-4, betas=(0.9, 0.99),
-    eps=1e-8, weight_decay=1e-4, layer_map_path=None, verbose=False,
+    [("transformer.h.0.mlp.w12.weight", parameter)],
+    qargs=qargs, lr=5e-4, betas=(0.9, 0.99),
+    eps=1e-8, weight_decay=1e-4, layer_map_path=DEFAULT_LAYER_MAP_PATH, verbose=False,
 )
 restored.load_state_dict(torch.load(buffer, weights_only=False))
 assert restored.state[parameter]["mu"].dtype == torch.float8_e4m3fn
