@@ -6,6 +6,8 @@ from pathlib import Path
 import time
 import yaml
 import os
+import subprocess
+import sys
 
 import torch
 import wandb
@@ -178,6 +180,16 @@ def _upload_inter_ckpt_to_huggingface(ckpt_dir: Path, curr_iter: int, cfg):
     return f"{cfg.hf_inter_ckpt_repo_id}/{path_in_repo}"
 
 
+def _upload_inter_ckpt_to_brain_lab(ckpt_dir: Path, curr_iter: int, cfg):
+    relay = Path(__file__).resolve().parents[2] / "scripts/cloud/relay_brain_lab_checkpoint.py"
+    remote_name = f"{_sanitize_remote_name(cfg.experiment_name)}-iter-{curr_iter}"
+    subprocess.run(
+        [sys.executable, str(relay), "upload", str(ckpt_dir), remote_name],
+        check=True,
+    )
+    return remote_name
+
+
 def _upload_inter_ckpt_and_maybe_delete(ckpt_dir: Path, curr_iter: int, cfg):
     uploaded_locations = {}
     failed_uploads = {}
@@ -192,6 +204,10 @@ def _upload_inter_ckpt_and_maybe_delete(ckpt_dir: Path, curr_iter: int, cfg):
                 uploaded_locations[destination] = _upload_inter_ckpt_to_huggingface(
                     ckpt_dir, curr_iter, cfg
                 )
+            elif destination == "brain_lab":
+                uploaded_locations[destination] = _upload_inter_ckpt_to_brain_lab(
+                    ckpt_dir, curr_iter, cfg
+                )
             else:  # pragma: no cover
                 raise ValueError(
                     f"Unsupported intermediate checkpoint upload destination: {destination}"
@@ -200,7 +216,7 @@ def _upload_inter_ckpt_and_maybe_delete(ckpt_dir: Path, curr_iter: int, cfg):
             failed_uploads[destination] = exc
 
     for destination, location in uploaded_locations.items():
-        remote_name = "W&B artifact" if destination == "wandb" else "Hugging Face path"
+        remote_name = {"wandb": "W&B artifact", "huggingface": "Hugging Face path", "brain_lab": "brain_lab path"}[destination]
         print(
             f"Uploaded intermediate checkpoint at iter {curr_iter} "
             f"to {remote_name} '{location}'."
@@ -217,7 +233,7 @@ def _upload_inter_ckpt_and_maybe_delete(ckpt_dir: Path, curr_iter: int, cfg):
         )
 
     for destination, exc in failed_uploads.items():
-        remote_name = "W&B artifact" if destination == "wandb" else "Hugging Face"
+        remote_name = {"wandb": "W&B artifact", "huggingface": "Hugging Face", "brain_lab": "brain_lab"}[destination]
         local_state = (
             "Local checkpoint was deleted because another upload destination succeeded."
             if deleted_local_copy

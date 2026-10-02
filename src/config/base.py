@@ -1,7 +1,7 @@
 import distributed
 import json
 
-INTER_CKPT_UPLOAD_DESTINATIONS = ("wandb", "huggingface")
+INTER_CKPT_UPLOAD_DESTINATIONS = ("wandb", "huggingface", "brain_lab")
 
 
 def parse_args(base_parser, args, namespace):
