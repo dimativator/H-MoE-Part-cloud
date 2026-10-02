@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="${PWD}/src:${PWD}${PYTHONPATH:+:${PYTHONPATH}}"
 python - <<'PY'
 import io
 import torch
 
 from third_party.coat.utils._fp8_quantization_config import QuantizationConfig
-from src.optim.memory_efficient.fp8_slim_adam import FP8SlimAdamW
+from optim.memory_efficient.fp8_slim_adam import FP8SlimAdamW
 
 qargs = QuantizationConfig(
     quantize_model="none", first_order_bit="E4M3", second_order_bit="E4M3",
