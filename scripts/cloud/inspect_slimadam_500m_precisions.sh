@@ -30,7 +30,7 @@ for precision in ("bf16", "fp8_act", "fp8_full", "w16a16g32_fp8_states"):
                     except json.JSONDecodeError:
                         continue
                     latest = item
-                    if "val_loss" in item:
+                    if "val/loss" in item:
                         last_eval = item
         print("PRECISION_STATUS", json.dumps({
             "precision": precision, "phase": phase,
