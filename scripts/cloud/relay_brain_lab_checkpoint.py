@@ -20,7 +20,13 @@ HOST_KEY = (
     "AAAAC3NzaC1lZDI1NTE5AAAAIIHHLCvWHzxMi+m7XnSqdhq3qWPOmGt+88zaEcWPDTui"
 )
 REMOTE_ROOT = "/home/dimativator/checkpoints/500m-slimadam-precisions-20261002"
-FILES = ("main.pt", "worker_0.pt", "worker_1.pt", "worker_2.pt", "worker_3.pt")
+
+
+def checkpoint_files():
+    worker_count = int(os.environ.get("BRAIN_LAB_CHECKPOINT_WORKERS", "4"))
+    if worker_count not in (2, 4):
+        raise ValueError("BRAIN_LAB_CHECKPOINT_WORKERS must be 2 or 4")
+    return ("main.pt", *(f"worker_{rank}.pt" for rank in range(worker_count)))
 
 
 def checksum(path):
@@ -49,6 +55,7 @@ def main():
     )
     if not secret:
         raise RuntimeError("BRAIN_LAB_RELAY_KEY_B64 is required")
+    files = checkpoint_files()
 
     with tempfile.TemporaryDirectory(prefix="brain-lab-relay-") as temporary:
         private_key = Path(temporary) / "id_ed25519"
@@ -68,7 +75,7 @@ def main():
             if not args.local_dir.is_dir():
                 raise FileNotFoundError(args.local_dir)
             hashes = {}
-            for name in FILES:
+            for name in files:
                 path = args.local_dir / name
                 if not path.is_file() or path.stat().st_size == 0:
                     raise RuntimeError(f"Incomplete checkpoint: {path}")
@@ -83,7 +90,7 @@ def main():
             run([*ssh, f"test -d {shlex.quote(final)}"])
             args.local_dir.parent.mkdir(parents=True, exist_ok=True)
             run([*scp, "-r", f"{USER}@{HOST}:{final}", str(args.local_dir)])
-            hashes = {name: checksum(args.local_dir / name) for name in FILES}
+            hashes = {name: checksum(args.local_dir / name) for name in files}
             remote = final
 
         for name, expected in hashes.items():

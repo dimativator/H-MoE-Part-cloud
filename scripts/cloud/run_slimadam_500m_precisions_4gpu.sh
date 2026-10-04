@@ -9,14 +9,22 @@ esac
 MODE=${MODE:-full}
 case "${MODE}" in smoke|full) ;; *) echo "MODE must be smoke or full" >&2; exit 2 ;; esac
 
-NPROC_PER_NODE=4
+NPROC_PER_NODE=${GPU_COUNT:-4}
+case "${NPROC_PER_NODE}" in 2|4) ;; *) echo "GPU_COUNT must be 2 or 4" >&2; exit 2 ;; esac
+if (( NPROC_PER_NODE == 2 )); then
+    BATCH_SIZE=16
+    ACC_STEPS=8
+else
+    BATCH_SIZE=8
+    ACC_STEPS=16
+fi
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
 RESULTS_DIR=${RESULTS_DIR:-/home/jovyan/dimativator/500m-slimadam-precisions-20261002}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
-TRUNK_GROUP=2xChinchilla_500M_slimadam_wd1e-4_precisions_4gpu
-DECAY_GROUP=1xChinchilla_decay_500M_slimadam_wd1e-4_precisions_4gpu
-TRUNK_NAME=llama500M_slim_adam_${PRECISION}_wd1e-4_2xC_warmup2000_4gpu
-DECAY_NAME=llama500M_slim_adam_${PRECISION}_wd1e-4_1xC_decay_warmup2000_4gpu
+TRUNK_GROUP=2xChinchilla_500M_slimadam_wd1e-4_precisions_${NPROC_PER_NODE}gpu
+DECAY_GROUP=1xChinchilla_decay_500M_slimadam_wd1e-4_precisions_${NPROC_PER_NODE}gpu
+TRUNK_NAME=llama500M_slim_adam_${PRECISION}_wd1e-4_2xC_warmup2000_${NPROC_PER_NODE}gpu
+DECAY_NAME=llama500M_slim_adam_${PRECISION}_wd1e-4_1xC_decay_warmup2000_${NPROC_PER_NODE}gpu
 TRUNK_DIR=${RESULTS_DIR}/${TRUNK_GROUP}/${TRUNK_NAME}
 DECAY_DIR=${RESULTS_DIR}/${DECAY_GROUP}/${DECAY_NAME}
 SOURCE_CKPT=${TRUNK_DIR}/ckpts/67911
@@ -60,10 +68,11 @@ if (( MPI_SIZE > 1 )); then
     export MASTER_ADDR=${MASTER_ADDR:-$(hostname -f)} MASTER_PORT=${MASTER_PORT:-29500}
     TRAIN_LAUNCHER=("${PYTHON_BIN}")
 else
-    TRAIN_LAUNCHER=("$(command -v torchrun)" --standalone --nproc_per_node=4)
+    TRAIN_LAUNCHER=("$(command -v torchrun)" --standalone --nproc_per_node="${NPROC_PER_NODE}")
 fi
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false PYTORCH_ALLOC_CONF=expandable_segments:True
 export FINEWEB_LOG_DATA_HASHES=1
+export BRAIN_LAB_CHECKPOINT_WORKERS="${NPROC_PER_NODE}"
 export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_MODE=offline WANDB_DIR="${RESULTS_DIR}/wandb"
 export TRITON_CACHE_DIR="/tmp/triton-500m-slimadam-${PRECISION}-${MODE}-rank${MPI_RANK}-$$"
 mkdir -p "${TRITON_CACHE_DIR}"
@@ -89,7 +98,7 @@ COMMON_ARGS=(
     --model llama --n-layer 18 --n-embd 1280 --n-head 20 --multiple-of 256
     --dtype bfloat16 --opt slim_adam --lr 5e-4 --weight-decay 1e-4
     --beta1 0.9 --beta2 0.99 --grad-clip 1.0
-    --batch-size 8 --acc-steps 16 --eval-batch-size 32
+    --batch-size "${BATCH_SIZE}" --acc-steps "${ACC_STEPS}" --eval-batch-size 32
     --results-base-folder "${RESULTS_DIR}" "${PRECISION_ARGS[@]}"
 )
 
@@ -149,7 +158,9 @@ fi
 if (( MPI_RANK == 0 )); then
     echo "SLIMADAM_1XC_DECAY_COMPLETE precision=${PRECISION} iter=75457"
     rm -f "${SOURCE_CKPT}/.relay_ready"
-    for required in main.pt worker_0.pt worker_1.pt worker_2.pt worker_3.pt; do
+    required_files=(main.pt)
+    for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
+    for required in "${required_files[@]}"; do
         [[ -s "${SOURCE_CKPT}/${required}" ]] || { echo "Missing local checkpoint file ${required}" >&2; exit 8; }
         rm -- "${SOURCE_CKPT}/${required}"
     done
