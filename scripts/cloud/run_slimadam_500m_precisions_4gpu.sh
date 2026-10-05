@@ -7,7 +7,7 @@ case "${PRECISION}" in
     *) echo "Unsupported PRECISION=${PRECISION}" >&2; exit 2 ;;
 esac
 MODE=${MODE:-full}
-case "${MODE}" in smoke|full|decay_only|relay_only) ;; *) echo "Unsupported MODE=${MODE}" >&2; exit 2 ;; esac
+case "${MODE}" in smoke|full|decay_only|verify_only|relay_only) ;; *) echo "Unsupported MODE=${MODE}" >&2; exit 2 ;; esac
 
 NPROC_PER_NODE=${GPU_COUNT:-4}
 case "${NPROC_PER_NODE}" in 2|4) ;; *) echo "GPU_COUNT must be 2 or 4" >&2; exit 2 ;; esac
@@ -42,7 +42,7 @@ echo "RUN_START=$(date --iso-8601=seconds) MODE=${MODE} PRECISION=${PRECISION} W
 df -h "${RESULTS_DIR}" /home/jovyan /workspace-SR006.nfs3
 
 PYTHON_BIN=$(command -v python)
-if [[ "${MODE}" != relay_only ]]; then
+if [[ "${MODE}" != relay_only && "${MODE}" != verify_only ]]; then
 DATASETS_DIR="${DATASETS_DIR}" "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -86,6 +86,7 @@ check_final_validation() {
     local metrics_path=$1 expected_iter=$2
     METRICS_PATH="${metrics_path}" EXPECTED_ITER="${expected_iter}" "${PYTHON_BIN}" - <<'PY'
 import json
+import math
 import os
 from pathlib import Path
 
@@ -96,10 +97,31 @@ with path.open() as stream:
     for line in stream:
         item = json.loads(line)
         if item.get("event") == "validation" and item.get("iter") == expected:
-            found = item.get("val/loss")
-if found is None:
+            found = item.get("final-val/loss", item.get("val/loss"))
+if found is None or not math.isfinite(float(found)):
     raise RuntimeError(f"Missing exact final validation at iter {expected}: {path}")
 print(f"FINAL_VAL_LOSS_EXACT iter={expected} value={found}", flush=True)
+PY
+}
+
+verify_saved_completion() {
+    local metrics_path=$1 expected_iter=$2
+    check_final_validation "${metrics_path}" "${expected_iter}"
+    METRICS_PATH="${metrics_path}" EXPECTED_ITER="${expected_iter}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+expected = int(os.environ["EXPECTED_ITER"])
+events = set()
+with Path(os.environ["METRICS_PATH"]).open() as stream:
+    for line in stream:
+        item = json.loads(line)
+        if item.get("iter") == expected:
+            events.add(item.get("event"))
+if not {"validation", "downstream", "lm_eval"}.issubset(events):
+    raise RuntimeError(f"Missing final evaluation events at iter {expected}: {events}")
+print(f"SAVED_COMPLETION_VERIFIED iter={expected}", flush=True)
 PY
 }
 
@@ -120,13 +142,13 @@ relay_and_remove_local_checkpoint() {
     echo "LOCAL_PRE_DECAY_CHECKPOINT_REMOVED=${SOURCE_CKPT}"
 }
 
-if [[ "${MODE}" == relay_only ]]; then
-    (( MPI_SIZE == 1 )) || { echo 'relay_only requires one CPU rank' >&2; exit 2; }
-    grep -Fq "SLIMADAM_1XC_DECAY_COMPLETE precision=${PRECISION} iter=75457" \
-        "${RESULTS_DIR}/logs/${TRUNK_NAME}_decay_only_rank0.log" \
-        "${RESULTS_DIR}/logs/${TRUNK_NAME}_full_rank0.log" 2>/dev/null || {
-        echo 'Decay completion marker not found; refusing checkpoint transfer' >&2; exit 9;
-    }
+if [[ "${MODE}" == verify_only || "${MODE}" == relay_only ]]; then
+    (( MPI_SIZE == 1 )) || { echo 'Verification and relay require one CPU rank' >&2; exit 2; }
+    verify_saved_completion "${DECAY_DIR}/metrics.jsonl" 75457
+    echo "SLIMADAM_1XC_DECAY_COMPLETION_AUDITED precision=${PRECISION} iter=75457"
+    if [[ "${MODE}" == verify_only ]]; then exit 0; fi
+    verify_saved_completion "${TRUNK_DIR}/metrics.jsonl" 150914
+    echo "SLIMADAM_2XC_COMPLETION_AUDITED precision=${PRECISION} iter=150914"
     relay_and_remove_local_checkpoint
     exit 0
 fi
