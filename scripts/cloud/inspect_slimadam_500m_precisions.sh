@@ -54,6 +54,12 @@ for precision in ("bf16", "fp8_act", "fp8_full", "w16a16g32_fp8_states"):
         b"Uploaded intermediate checkpoint",
         b"Deleted local intermediate checkpoint",
         b"WARNING: failed to upload intermediate checkpoint",
+        b"scp: ",
+        b"ssh: ",
+        b"Permission denied",
+        b"No space left on device",
+        b"Host key verification failed",
+        b"lost connection",
     )
     events = []
     if log.is_file():

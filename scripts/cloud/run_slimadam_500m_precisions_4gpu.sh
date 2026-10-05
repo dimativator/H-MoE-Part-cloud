@@ -7,7 +7,7 @@ case "${PRECISION}" in
     *) echo "Unsupported PRECISION=${PRECISION}" >&2; exit 2 ;;
 esac
 MODE=${MODE:-full}
-case "${MODE}" in smoke|full) ;; *) echo "MODE must be smoke or full" >&2; exit 2 ;; esac
+case "${MODE}" in smoke|full|decay_only|relay_only) ;; *) echo "Unsupported MODE=${MODE}" >&2; exit 2 ;; esac
 
 NPROC_PER_NODE=${GPU_COUNT:-4}
 case "${NPROC_PER_NODE}" in 2|4) ;; *) echo "GPU_COUNT must be 2 or 4" >&2; exit 2 ;; esac
@@ -42,6 +42,7 @@ echo "RUN_START=$(date --iso-8601=seconds) MODE=${MODE} PRECISION=${PRECISION} W
 df -h "${RESULTS_DIR}" /home/jovyan /workspace-SR006.nfs3
 
 PYTHON_BIN=$(command -v python)
+if [[ "${MODE}" != relay_only ]]; then
 DATASETS_DIR="${DATASETS_DIR}" "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -56,9 +57,12 @@ assert torch.__version__.startswith('2.9.1')
 assert torch.cuda.is_available()
 print('ENVIRONMENT_AND_DATA_CHECK=ok', flush=True)
 PY
+fi
 
-if [[ "${MODE}" == full ]]; then
+if [[ "${MODE}" != smoke ]]; then
     [[ -n "${BRAIN_LAB_RELAY_KEY_B64:-}${BRAIN_LAB_RELAY_KEY_B64_0:-}" ]] || { echo 'Missing relay credential' >&2; exit 3; }
+fi
+if [[ "${MODE}" == full ]]; then
     available_bytes=$(df -B1 --output=avail "${RESULTS_DIR}" | tail -n 1 | tr -d ' ')
     (( available_bytes >= 6500000000 )) || { echo "Insufficient checkpoint space: ${available_bytes}" >&2; exit 4; }
 fi
@@ -77,6 +81,55 @@ export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_MODE=off
 export TRITON_CACHE_DIR="/tmp/triton-500m-slimadam-${PRECISION}-${MODE}-rank${MPI_RANK}-$$"
 mkdir -p "${TRITON_CACHE_DIR}"
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+check_final_validation() {
+    local metrics_path=$1 expected_iter=$2
+    METRICS_PATH="${metrics_path}" EXPECTED_ITER="${expected_iter}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["METRICS_PATH"])
+expected = int(os.environ["EXPECTED_ITER"])
+found = None
+with path.open() as stream:
+    for line in stream:
+        item = json.loads(line)
+        if item.get("event") == "validation" and item.get("iter") == expected:
+            found = item.get("val/loss")
+if found is None:
+    raise RuntimeError(f"Missing exact final validation at iter {expected}: {path}")
+print(f"FINAL_VAL_LOSS_EXACT iter={expected} value={found}", flush=True)
+PY
+}
+
+relay_and_remove_local_checkpoint() {
+    local required rank
+    local required_files=(main.pt)
+    for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
+    [[ -d "${SOURCE_CKPT}" ]] || { echo "Missing checkpoint: ${SOURCE_CKPT}" >&2; return 8; }
+    for required in "${required_files[@]}"; do
+        [[ -s "${SOURCE_CKPT}/${required}" ]] || { echo "Incomplete checkpoint file: ${required}" >&2; return 8; }
+    done
+    check_final_validation "${DECAY_DIR}/metrics.jsonl" 75457
+    "${PYTHON_BIN}" scripts/cloud/relay_brain_lab_checkpoint.py upload "${SOURCE_CKPT}" "${REMOTE_NAME}"
+    for required in "${required_files[@]}"; do
+        rm -- "${SOURCE_CKPT}/${required}"
+    done
+    rmdir -- "${SOURCE_CKPT}"
+    echo "LOCAL_PRE_DECAY_CHECKPOINT_REMOVED=${SOURCE_CKPT}"
+}
+
+if [[ "${MODE}" == relay_only ]]; then
+    (( MPI_SIZE == 1 )) || { echo 'relay_only requires one CPU rank' >&2; exit 2; }
+    grep -Fq "SLIMADAM_1XC_DECAY_COMPLETE precision=${PRECISION} iter=75457" \
+        "${RESULTS_DIR}/logs/${TRUNK_NAME}_decay_only_rank0.log" \
+        "${RESULTS_DIR}/logs/${TRUNK_NAME}_full_rank0.log" 2>/dev/null || {
+        echo 'Decay completion marker not found; refusing checkpoint transfer' >&2; exit 9;
+    }
+    relay_and_remove_local_checkpoint
+    exit 0
+fi
 
 PRECISION_ARGS=()
 case "${PRECISION}" in
@@ -111,11 +164,11 @@ if [[ "${MODE}" == smoke ]]; then
     exit 0
 fi
 
-if [[ -e "${TRUNK_DIR}/metrics.jsonl" || -e "${DECAY_DIR}/metrics.jsonl" ]]; then
-    echo "Refusing to overwrite an existing run: ${TRUNK_DIR}" >&2; exit 5
-fi
-
-"${TRAIN_LAUNCHER[@]}" src/main.py "${COMMON_ARGS[@]}" \
+if [[ "${MODE}" == full ]]; then
+    if [[ -e "${TRUNK_DIR}/metrics.jsonl" || -e "${DECAY_DIR}/metrics.jsonl" ]]; then
+        echo "Refusing to overwrite an existing run: ${TRUNK_DIR}" >&2; exit 5
+    fi
+    "${TRAIN_LAUNCHER[@]}" src/main.py "${COMMON_ARGS[@]}" \
     --experiment-name "${TRUNK_NAME}" \
     --scheduler wsd --warmup-steps 2000 --iterations 150914 \
     --wsd-fract-decay 0.1 --wsd-final-lr-scale 0 --decay-type cosine \
@@ -123,25 +176,22 @@ fi
     --downstream-eval-enabled --downstream-eval-interval 2000 --downstream-task-group basic_v2 \
     --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
     --inter-ckpts 67911 --latest-ckpt-interval 0 \
-    --upload-inter-ckpts-to brain_lab --delete-local-inter-ckpts-after-upload \
     --wandb --wandb-project fp8-pretrain --wandb-group "${TRUNK_GROUP}" \
     --wandb-tags fineweb 2xChinchilla 500M slim_adam wd1e-4 warmup2000 "${PRECISION}" \
     --metrics-jsonl "${TRUNK_DIR}/metrics.jsonl"
-
-if (( MPI_RANK == 0 )); then
-    echo "SLIMADAM_2XC_COMPLETE precision=${PRECISION} iter=150914"
-    if [[ -e "${SOURCE_CKPT}" ]]; then
-        echo 'Local pre-decay checkpoint remained after relay; refusing to continue' >&2; exit 6
+    if (( MPI_RANK == 0 )); then
+        check_final_validation "${TRUNK_DIR}/metrics.jsonl" 150914
+        echo "SLIMADAM_2XC_COMPLETE precision=${PRECISION} iter=150914"
     fi
-    "${PYTHON_BIN}" scripts/cloud/relay_brain_lab_checkpoint.py download "${SOURCE_CKPT}" "${REMOTE_NAME}"
-    touch "${SOURCE_CKPT}/.relay_ready"
 else
-    for (( attempt=0; attempt<720; attempt++ )); do
-        [[ -f "${SOURCE_CKPT}/.relay_ready" ]] && break
-        sleep 10
-    done
-    [[ -f "${SOURCE_CKPT}/.relay_ready" ]] || { echo 'Timed out waiting for verified relay download' >&2; exit 7; }
+    [[ ! -e "${DECAY_DIR}/metrics.jsonl" ]] || { echo 'Decay run already exists' >&2; exit 5; }
+    check_final_validation "${TRUNK_DIR}/metrics.jsonl" 150914
 fi
+required_files=(main.pt)
+for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
+for required in "${required_files[@]}"; do
+    [[ -s "${SOURCE_CKPT}/${required}" ]] || { echo "Incomplete checkpoint file: ${required}" >&2; exit 8; }
+done
 
 "${TRAIN_LAUNCHER[@]}" src/main.py "${COMMON_ARGS[@]}" \
     --experiment-name "${DECAY_NAME}" --resume-from "${SOURCE_CKPT}" --decay-from-checkpoint \
@@ -156,14 +206,7 @@ fi
     --metrics-jsonl "${DECAY_DIR}/metrics.jsonl"
 
 if (( MPI_RANK == 0 )); then
+    check_final_validation "${DECAY_DIR}/metrics.jsonl" 75457
     echo "SLIMADAM_1XC_DECAY_COMPLETE precision=${PRECISION} iter=75457"
-    rm -f "${SOURCE_CKPT}/.relay_ready"
-    required_files=(main.pt)
-    for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
-    for required in "${required_files[@]}"; do
-        [[ -s "${SOURCE_CKPT}/${required}" ]] || { echo "Missing local checkpoint file ${required}" >&2; exit 8; }
-        rm -- "${SOURCE_CKPT}/${required}"
-    done
-    rmdir -- "${SOURCE_CKPT}"
-    echo "LOCAL_PRE_DECAY_CHECKPOINT_REMOVED=${SOURCE_CKPT}"
+    relay_and_remove_local_checkpoint
 fi
