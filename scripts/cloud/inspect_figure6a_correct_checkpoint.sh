@@ -14,6 +14,14 @@ if [[ -n "${RESULTS_DIR:-}" && -d "$RESULTS_DIR/logs" ]]; then
         echo "LOG=$log"
         tail -n 12 "$log"
     done
+    metrics="$RESULTS_DIR/figure6a_correct_checkpoint_20261005/llama500M_adamw_fp8_states_1xC_2gpu_global128/metrics.jsonl"
+    if [[ -f "$metrics" ]]; then tail -n 5 "$metrics"; fi
+    checkpoint="$RESULTS_DIR/figure6a_correct_checkpoint_20261005/llama500M_adamw_fp8_states_1xC_2gpu_global128/ckpts/67911"
+    if [[ -d "$checkpoint" ]]; then
+        for file in main.pt worker_0.pt worker_1.pt; do
+            if [[ -f "$checkpoint/$file" ]]; then stat -c '%n %s bytes' "$checkpoint/$file"; fi
+        done
+    fi
 fi
 if [[ "${DIAGNOSE_RESUME:-0}" == 1 ]]; then
     python - <<'PY'
