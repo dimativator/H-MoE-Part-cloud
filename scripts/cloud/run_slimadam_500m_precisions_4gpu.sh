@@ -59,7 +59,7 @@ print('ENVIRONMENT_AND_DATA_CHECK=ok', flush=True)
 PY
 fi
 
-if [[ "${MODE}" != smoke ]]; then
+if [[ "${MODE}" == relay_only ]]; then
     [[ -n "${BRAIN_LAB_RELAY_KEY_B64:-}${BRAIN_LAB_RELAY_KEY_B64_0:-}" ]] || { echo 'Missing relay credential' >&2; exit 3; }
 fi
 if [[ "${MODE}" == full ]]; then
@@ -208,5 +208,4 @@ done
 if (( MPI_RANK == 0 )); then
     check_final_validation "${DECAY_DIR}/metrics.jsonl" 75457
     echo "SLIMADAM_1XC_DECAY_COMPLETE precision=${PRECISION} iter=75457"
-    relay_and_remove_local_checkpoint
 fi
