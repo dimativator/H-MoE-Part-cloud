@@ -64,7 +64,7 @@ if [[ "$MODE" == smoke ]]; then
         --inter-ckpts 2 --latest-ckpt-interval 0
     if (( RANK_ID == 0 )); then
         python scripts/cloud/audit_figure6a_checkpoint.py "$RESULTS_DIR/$GROUP/smoke_continuous/ckpts/2" \
-            --iteration 2 --compare "$RESULTS_DIR/$GROUP/smoke_resume/ckpts/2"
+            --iteration 2 --compare "$RESULTS_DIR/$GROUP/smoke_resume/ckpts/2" --numerical-next-step
     fi
     "${LAUNCH[@]}" src/main.py "${COMMON[@]}" --experiment-name smoke_500M_memory \
         --early-stop-iteration 2 --eval-interval 2 --eval-batches 1 --log-interval 1 --no-local-save

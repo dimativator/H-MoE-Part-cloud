@@ -51,11 +51,25 @@ if __name__ == "__main__":
     parser.add_argument("directory")
     parser.add_argument("--iteration", type=int, required=True)
     parser.add_argument("--compare")
+    parser.add_argument("--numerical-next-step", action="store_true")
     args = parser.parse_args()
     main, workers = audit(args.directory, args.iteration)
     if args.compare:
         other, other_workers = audit(args.compare, args.iteration)
-        compare(main, other)
+        if args.numerical_next_step:
+            maximum = 0.0
+            for key, value in main["model"].items():
+                right = other["model"][key]
+                difference = (value.float() - right.float()).abs()
+                maximum = max(maximum, difference.max().item())
+                # BF16 compute and DDP reductions need not be bitwise deterministic.
+                torch.testing.assert_close(value, right, atol=2e-6, rtol=1e-5)
+                assert difference.mean().item() < 2e-10, key
+            compare(main["scheduler"], other["scheduler"])
+            compare(main["optimizer"]["param_groups"], other["optimizer"]["param_groups"])
+            print(f"NUMERICAL_NEXT_STEP_OK max_model_abs_diff={maximum}", flush=True)
+        else:
+            compare(main, other)
         for rank in range(2):
             compare(workers[rank]["train_reader_state"], other_workers[rank]["train_reader_state"])
-        print("EXACT_RESUME_MODEL_OPTIMIZER_SCHEDULER_READERS_OK", flush=True)
+        print("RESUME_CHECK_SCHEDULER_READERS_OK", flush=True)
