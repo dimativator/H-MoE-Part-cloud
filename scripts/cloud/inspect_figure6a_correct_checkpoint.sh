@@ -13,6 +13,7 @@ if [[ -n "${RESULTS_DIR:-}" && -d "$RESULTS_DIR/logs" ]]; then
     for log in "$RESULTS_DIR"/logs/*.log; do
         echo "LOG=$log"
         tail -n 12 "$log"
+        tr '\r' '\n' < "$log" | grep -E 'Train:|Eval:|CHECKPOINT_|NUMERICAL_|RESUME_CHECK|FIGURE6A_|Traceback|AssertionError|RuntimeError' | tail -n 16 || true
     done
     metrics="$RESULTS_DIR/figure6a_correct_checkpoint_20261005/llama500M_adamw_fp8_states_1xC_2gpu_global128/metrics.jsonl"
     if [[ -f "$metrics" ]]; then tail -n 5 "$metrics"; fi
