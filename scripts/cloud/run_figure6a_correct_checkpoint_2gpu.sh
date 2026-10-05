@@ -35,6 +35,7 @@ else
 fi
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
 export PYTORCH_ALLOC_CONF=expandable_segments:True COAT_FP8_BACKEND=native
+export FIGURE6A_CHECKPOINT_AUDIT=1
 export WANDB_MODE=offline WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_DIR="$RESULTS_DIR/wandb"
 export TRITON_CACHE_DIR="/tmp/figure6a-${MODE}-rank${RANK_ID}-$$"
 COMMON=(--distributed-backend nccl --seed 0 --data-seed 1337

@@ -435,6 +435,17 @@ def train(
                 save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
             save_worker_state(ckpt_dir, train_reader=train_reader)
 
+            if os.environ.get("FIGURE6A_CHECKPOINT_AUDIT") == "1":
+                # Audit only after both ranks have finished writing their real states.
+                distributed_backend.barrier()
+                if distributed_backend.is_master_process():
+                    subprocess.run([
+                        sys.executable,
+                        str(Path(__file__).resolve().parents[2] / "scripts/cloud/audit_figure6a_checkpoint.py"),
+                        str(ckpt_dir), "--iteration", str(curr_iter),
+                    ], check=True)
+                distributed_backend.barrier()
+
             if cfg.upload_inter_ckpts_to:
                 distributed_backend.barrier()
                 if distributed_backend.is_master_process():
