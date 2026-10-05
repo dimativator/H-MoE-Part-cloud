@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from contextlib import nullcontext
 import torch.distributed as dist
 import math
+import os
 import wandb
 
 from tqdm.auto import trange
@@ -367,6 +368,14 @@ def load_checkpoint(
         opt.load_state_dict(ckpt["optimizer"])
     if load_scheduler and scheduler is not None and ckpt.get("scheduler") is not None:
         scheduler.load_state_dict(ckpt["scheduler"])
+    if os.environ.get("FIGURE6A_CHECKPOINT_AUDIT") == "1":
+        from scripts.cloud.audit_figure6a_checkpoint import compare
+        compare(model.state_dict(), ckpt["model"], "restored.model")
+        if load_optimizer:
+            compare(opt.state_dict(), ckpt["optimizer"], "restored.optimizer")
+        if load_scheduler:
+            compare(scheduler.state_dict(), ckpt["scheduler"], "restored.scheduler")
+        print("CHECKPOINT_RESTORED_MODEL_OPTIMIZER_SCHEDULER_EXACT", flush=True)
     itr = ckpt["itr"]
     return itr
 
