@@ -38,12 +38,18 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True COAT_FP8_BACKEND=native
 export FIGURE6A_CHECKPOINT_AUDIT=1
 export WANDB_MODE=offline WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_DIR="$RESULTS_DIR/wandb"
 export TRITON_CACHE_DIR="/tmp/figure6a-${MODE}-rank${RANK_ID}-$$"
+DECAY_FRACTION=$(python - <<'PY'
+fraction = 7546.5 / 75457
+assert int(75457 * fraction) == 7546
+print(repr(fraction))
+PY
+)
 COMMON=(--distributed-backend nccl --seed 0 --data-seed 1337
     --dataset fineweb --datasets-dir "$DATASETS_DIR" --sequence-length 1024 --streaming --workers 8
     --model llama --n-layer 18 --n-embd 1280 --n-head 20 --multiple-of 256 --dtype bfloat16 --dropout 0
     --opt triton_coat_adamw --lr 1e-3 --weight-decay 1e-4 --beta1 0.9 --beta2 0.99 --eps 1e-7 --grad-clip 1
     --fp8-optim --fp8-qgroup-size 128 --fp8-first-order-bit E4M3 --fp8-second-order-bit E4M3 --fp8-expansion expand
-    --scheduler wsd --warmup-steps 7000 --iterations 75457 --wsd-fract-decay 0.1 --wsd-final-lr-scale 0 --decay-type cosine
+    --scheduler wsd --warmup-steps 7000 --iterations 75457 --wsd-fract-decay "$DECAY_FRACTION" --wsd-final-lr-scale 0 --decay-type cosine
     --batch-size 16 --acc-steps 8 --eval-batch-size 32 --results-base-folder "$RESULTS_DIR" --wandb-group "$GROUP")
 if [[ "$MODE" == smoke ]]; then
     test ! -e "$RESULTS_DIR/$GROUP/smoke_continuous"
