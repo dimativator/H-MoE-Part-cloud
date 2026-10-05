@@ -185,7 +185,8 @@ if [[ "${MODE}" == full ]]; then
     fi
 else
     [[ ! -e "${DECAY_DIR}/metrics.jsonl" ]] || { echo 'Decay run already exists' >&2; exit 5; }
-    check_final_validation "${TRUNK_DIR}/metrics.jsonl" 150914
+    SOURCE_CKPT="${SOURCE_CKPT}" CHECKPOINT_WORKERS="${NPROC_PER_NODE}" CHECKPOINT_ACC_STEPS="${ACC_STEPS}" \
+        bash scripts/cloud/audit_slimadam_precision_decay_source.sh
 fi
 required_files=(main.pt)
 for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
