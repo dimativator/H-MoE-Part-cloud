@@ -28,6 +28,7 @@ for source in sources:
         worker = torch.load(source / f'worker_{rank}.pt', map_location='cpu', weights_only=False)
         reader = worker['train_reader_state']
         assert int(reader['rank']) == rank, f'Wrong reader rank: {source}'
+        print('READER_STATE', json.dumps({'path': str(source), 'rank': rank, 'reader': reader}), flush=True)
         assert int(reader['step']) == 67911 * acc_steps, f'Wrong reader cursor: {source}'
         assert all(name in worker for name in ('rng_torch_cpu', 'rng_torch_gpu', 'rng_np', 'rng_python'))
         cursors.append(int(reader['step']))
