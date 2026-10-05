@@ -48,28 +48,32 @@ COMMON=(--distributed-backend nccl --seed 0 --data-seed 1337
 if [[ "$MODE" == smoke ]]; then
     test ! -e "$RESULTS_DIR/$GROUP/smoke_continuous"
     "${LAUNCH[@]}" src/main.py "${COMMON[@]}" --experiment-name smoke_continuous \
+        --n-layer 2 --n-embd 128 --n-head 4 --multiple-of 64 \
         --early-stop-iteration 2 --eval-interval 2 --eval-batches 1 --log-interval 1 \
         --inter-ckpts 1 2 --latest-ckpt-interval 0
     "${LAUNCH[@]}" src/main.py "${COMMON[@]}" --experiment-name smoke_resume \
+        --n-layer 2 --n-embd 128 --n-head 4 --multiple-of 64 \
         --resume-from "$RESULTS_DIR/$GROUP/smoke_continuous/ckpts/1" \
         --early-stop-iteration 2 --eval-interval 2 --eval-batches 1 --log-interval 1 \
         --inter-ckpts 2 --latest-ckpt-interval 0
     if (( RANK_ID == 0 )); then
         python scripts/cloud/audit_figure6a_checkpoint.py "$RESULTS_DIR/$GROUP/smoke_continuous/ckpts/2" \
             --iteration 2 --compare "$RESULTS_DIR/$GROUP/smoke_resume/ckpts/2"
-        echo FIGURE6A_CHECKPOINT_SMOKE_COMPLETE
     fi
+    "${LAUNCH[@]}" src/main.py "${COMMON[@]}" --experiment-name smoke_500M_memory \
+        --early-stop-iteration 2 --eval-interval 2 --eval-batches 1 --log-interval 1 --no-local-save
+    if (( RANK_ID == 0 )); then echo FIGURE6A_CHECKPOINT_SMOKE_COMPLETE; fi
 else
     NAME=llama500M_adamw_fp8_states_1xC_2gpu_global128
     test ! -e "$RESULTS_DIR/$GROUP/$NAME"
     free_bytes=$(df -B1 --output=avail "$RESULTS_DIR" | tail -n 1 | tr -d ' ')
-    (( free_bytes > 15000000000 )) || { echo INSUFFICIENT_CHECKPOINT_DISK; exit 3; }
+    (( free_bytes > 4500000000 )) || { echo INSUFFICIENT_CHECKPOINT_DISK; exit 3; }
     "${LAUNCH[@]}" src/main.py "${COMMON[@]}" --experiment-name "$NAME" \
         --eval-interval 500 --eval-batches 32 --log-interval 50 \
-        --inter-ckpts 67911 75457 --latest-ckpt-interval 10000 \
+        --inter-ckpts 67911 --latest-ckpt-interval 0 \
         --wandb --wandb-project fp8-pretrain --metrics-jsonl "$RESULTS_DIR/$GROUP/$NAME/metrics.jsonl"
     if (( RANK_ID == 0 )); then
-        for step in 67911 75457; do
+        for step in 67911; do
             python scripts/cloud/audit_figure6a_checkpoint.py "$RESULTS_DIR/$GROUP/$NAME/ckpts/$step" --iteration "$step"
         done
         echo FIGURE6A_CORRECT_CHECKPOINT_COMPLETE iter=75457
