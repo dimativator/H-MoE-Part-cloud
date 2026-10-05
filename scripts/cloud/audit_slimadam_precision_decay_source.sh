@@ -4,6 +4,7 @@ echo "AUDIT_UTC=$(date -u --iso-8601=seconds)"
 df -h /home/jovyan /workspace-SR006.nfs2 /workspace-SR006.nfs3
 python - <<'PY'
 import json
+import math
 import os
 from pathlib import Path
 
@@ -19,6 +20,7 @@ sources = [Path(os.environ['SOURCE_CKPT'])] if os.environ.get('SOURCE_CKPT') els
 ]
 workers = int(os.environ.get('CHECKPOINT_WORKERS', '2'))
 acc_steps = int(os.environ.get('CHECKPOINT_ACC_STEPS', '8'))
+acc_steps //= math.gcd(acc_steps, workers)
 for source in sources:
     main = torch.load(source / 'main.pt', map_location='cpu', mmap=True, weights_only=False)
     assert int(main['itr']) == 67911, f'Unexpected checkpoint iteration: {source}'
