@@ -17,6 +17,23 @@ if [[ -n "${RESULTS_DIR:-}" && -d "$RESULTS_DIR/logs" ]]; then
     done
     metrics="$RESULTS_DIR/figure6a_correct_checkpoint_20261005/llama500M_adamw_fp8_states_1xC_2gpu_global128/metrics.jsonl"
     if [[ -f "$metrics" ]]; then tail -n 5 "$metrics"; fi
+    if [[ -f "$metrics" ]]; then
+        python - "$metrics" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+points = {}
+for line in Path(sys.argv[1]).read_text().splitlines():
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if record.get('event') == 'validation' and 'val/loss' in record:
+        points[int(record['iter'])] = float(record['val/loss'])
+print('CURVE_JSON=' + json.dumps(sorted(points.items())))
+PY
+    fi
     checkpoint="$RESULTS_DIR/figure6a_correct_checkpoint_20261005/llama500M_adamw_fp8_states_1xC_2gpu_global128/ckpts/67911"
     if [[ -d "$checkpoint" ]]; then
         for file in main.pt worker_0.pt worker_1.pt; do
