@@ -9,6 +9,33 @@ import subprocess
 
 import wandb
 import yaml
+from wandb.proto import wandb_internal_pb2
+from wandb.sdk.internal.datastore import DataStore
+
+
+def offline_name(run_dir: Path) -> str | None:
+    config_file = run_dir / "files/config.yaml"
+    if config_file.is_file():
+        config = yaml.safe_load(config_file.read_text())
+        name = config.get("experiment_name", {}).get("value")
+        if name:
+            return name
+    files = list(run_dir.glob("run-*.wandb"))
+    if len(files) != 1:
+        return None
+    reader = DataStore()
+    reader.open_for_scan(str(files[0]))
+    try:
+        while True:
+            data = reader.scan_data()
+            if data is None:
+                return None
+            record = wandb_internal_pb2.Record()
+            record.ParseFromString(data)
+            if record.HasField("run"):
+                return record.run.display_name
+    finally:
+        reader.close()
 
 
 def main() -> None:
@@ -34,11 +61,7 @@ def main() -> None:
             assert len(losses) == 1 and math.isfinite(losses[0]), name
             matches = []
             for run_dir in (root / "wandb").rglob("offline-run-*"):
-                config_file = run_dir / "files/config.yaml"
-                if not config_file.is_file():
-                    continue
-                config = yaml.safe_load(config_file.read_text())
-                if config.get("experiment_name", {}).get("value") == name:
+                if offline_name(run_dir) == name:
                     matches.append(run_dir)
             assert len(matches) == 1, f"Expected one offline run for {name}, got {len(matches)}"
             run_dir = matches[0]
