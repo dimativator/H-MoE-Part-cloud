@@ -7,6 +7,13 @@ from pathlib import Path
 import time
 
 
+def same_serialized_loss(remote: object, local: float) -> bool:
+    # W&B JSON serialization can round the final binary float by a few ULPs.
+    return (isinstance(remote, (int, float)) and not isinstance(remote, bool)
+            and math.isfinite(remote)
+            and math.isclose(remote, local, rel_tol=0.0, abs_tol=1e-12))
+
+
 def final_loss(path: Path, target: int) -> float:
     events = set()
     losses = []
@@ -43,7 +50,7 @@ def main() -> None:
     for attempt in range(6):
         api.flush()
         run = api.run(f'andrey/fp8-pretrain/{args.run_id}')
-        if run.summary.get('final-val/loss') == loss:
+        if same_serialized_loss(run.summary.get('final-val/loss'), loss):
             break
         if attempt == 5:
             raise ValueError(f'W&B final not uploaded: {args.run_id}')
