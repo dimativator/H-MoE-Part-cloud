@@ -108,8 +108,8 @@ def main() -> None:
     with (args.state.parent / "controller.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         state = json.loads(args.state.read_text())
-        if not state.get("smokes_verified"):
-            raise RuntimeError("Require verified one-GPU and two-GPU smokes before tuning")
+        if not state.get("smoke_1gpu_verified"):
+            raise RuntimeError("Require a verified one-GPU smoke before tuning")
         try:
             submit(args.state, state, "queue_A", 1, "tune --queue A")
             submit(args.state, state, "queue_B", 1, "tune --queue B")
@@ -129,6 +129,12 @@ def main() -> None:
                     state["selection"] = {"criterion": "minimum finite final validation loss at 39250 steps",
                                           "selected": best, "candidates": records}
                     save(args.state, state)
+                    submit(args.state, state, "smoke_2gpu", 2, "smoke --gpus 2")
+                    if not completed(args.state, state, "smoke_2gpu", 1):
+                        state["status"] = "ddp_smoke_pending"
+                        save(args.state, state)
+                        time.sleep(args.poll_seconds)
+                        continue
                     submit(args.state, state, "long", 2, "long --lr " + best["lr"])
                     if completed(args.state, state, "long", 5):
                         state["status"] = "complete"

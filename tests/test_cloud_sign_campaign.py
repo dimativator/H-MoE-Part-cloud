@@ -79,6 +79,15 @@ class CloudSignCampaignTest(unittest.TestCase):
             path.write_text('{"iter": 50, "train/loss": 3.0}\n{"iter": 100, "train/loss": NaN}\n')
             self.assertEqual(campaign.nonfinite_loss(path)["step"], 100)
 
+    def test_two_gpu_single_worker_uses_torchrun(self):
+        launch = [sys.executable, "src/main.py", "--experiment-name", "trial"]
+        actual = campaign.training_launcher(launch, world=2, mpi_size=1)
+        self.assertEqual(actual[:5], [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                                     "--nproc_per_node=2"])
+        self.assertEqual(actual[5:], launch[1:])
+        self.assertEqual(campaign.training_launcher(launch, world=1, mpi_size=1), launch)
+        self.assertEqual(campaign.training_launcher(launch, world=2, mpi_size=2), launch)
+
 
 if __name__ == "__main__":
     unittest.main()

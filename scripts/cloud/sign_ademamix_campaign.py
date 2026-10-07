@@ -131,6 +131,13 @@ def nonfinite_loss(metrics: Path) -> dict | None:
     return None
 
 
+def training_launcher(launch: list[str], world: int, mpi_size: int) -> list[str]:
+    if mpi_size == 1 and world > 1:
+        return [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                f"--nproc_per_node={world}", *launch[1:]]
+    return launch
+
+
 def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset: Path,
             world: int, *, resume: Path | None = None, milestones: tuple[int, ...] = (),
             smoke: bool = False) -> Path:
@@ -167,9 +174,7 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
                      resume=resume, milestones=milestones, smoke=smoke)
     # mlsub can allocate two GPUs to one MPI worker. Spawn both training ranks
     # locally in that case, as in the existing Huawei launchers.
-    if int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) == 1 and world > 1:
-        launch = [sys.executable, "-m", "torch.distributed.run", "--standalone",
-                  f"--nproc_per_node={world}", *launch[1:]]
+    launch = training_launcher(launch, world, int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")))
     if rank == 0:
         emit("SIGN_START", {"name": name, "run_id": run_id, "target": target, "gpus": world})
         atomic_json(experiment / "launch.json", {"command": launch, "run_id": run_id, "gpus": world})
@@ -321,6 +326,8 @@ def main() -> None:
                 world, resume=trunk / "ckpts" / str(checkpoint))
     if int(os.environ.get("OMPI_COMM_WORLD_RANK", "0")) == 0:
         cleanup_checkpoint(args.output, trunk)
+    if shutil.disk_usage(args.output).free < 7_000_000_000:
+        raise RuntimeError("Need at least 7 GB checkpoint headroom before 500M")
     trunk = run_one("500m", args.lr, 150914, "full2xc", args.output, args.dataset, world, milestones=(67911,))
     run_one("500m", args.lr, 75457, "decay1xc", args.output, args.dataset, world,
             resume=trunk / "ckpts/67911")

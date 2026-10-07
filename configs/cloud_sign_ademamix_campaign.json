@@ -1,0 +1,86 @@
+{
+  "campaign": "sign-ademamix-20261007",
+  "created": "07-10-2026",
+  "cloud_repo": "https://github.com/dimativator/H-MoE-Part-cloud.git",
+  "cloud_branch": "codex/sign-ademamix-20261007",
+  "image": "efficient",
+  "wandb": {
+    "host": "https://wandb-radfan.ru",
+    "entity": "andrey",
+    "project": "fp8-pretrain"
+  },
+  "dataset": "/workspace-SR006.nfs3/dimativator/fineweb-h200-packed",
+  "output": "/home/jovyan/dimativator/sign-ademamix-20261007",
+  "common": {
+    "optimizer": "ademamix_sign",
+    "dtype": "bfloat16",
+    "seed": 0,
+    "data_seed": 1337,
+    "sequence_length": 1024,
+    "global_batch": 128,
+    "grad_clip": 0.5,
+    "warmup_steps": 2000,
+    "scheduler": "wsd",
+    "decay": "cosine",
+    "decay_fraction": 0.1,
+    "final_lr_scale": 0,
+    "beta1": 0.9,
+    "beta3": 0.9999,
+    "alpha": 8,
+    "momentum_warmup": "full trunk horizon; preserved when resuming cooldown branches"
+  },
+  "lr_tuning": {
+    "size": "257M",
+    "lr_grid": [
+      "2e-3",
+      "1e-3",
+      "5e-4",
+      "1e-4"
+    ],
+    "weight_decay": 0.1,
+    "iterations": 39250,
+    "tokens": 5144576000,
+    "gpus_per_run": 1,
+    "parallel_runs": 2,
+    "queue_A": [
+      "2e-3",
+      "5e-4"
+    ],
+    "queue_B": [
+      "1e-3",
+      "1e-4"
+    ],
+    "selection": "lowest finite exact final validation loss; numerical NaN/Inf runs retained as diverged and excluded"
+  },
+  "257M_best_lr": {
+    "gpus": 2,
+    "weight_decay": 0.1,
+    "trunk_iterations": 157000,
+    "tokens": 20578304000,
+    "cooldowns": [
+      {
+        "checkpoint": 35325,
+        "target": 39250
+      },
+      {
+        "checkpoint": 70650,
+        "target": 78500
+      }
+    ]
+  },
+  "500M_best_lr": {
+    "gpus": 2,
+    "weight_decay": 0.0001,
+    "trunk_iterations": 150914,
+    "tokens": 19780599808,
+    "cooldowns": [
+      {
+        "checkpoint": 67911,
+        "target": 75457
+      }
+    ]
+  },
+  "checkpoint_policy": "no checkpoint writes during tuning; long trunks retain only the required pre-decay sources; delete each trunk ckpts directory after all its exact final evaluations are verified locally and in W&B; never delete logs or W&B runs",
+  "controller": "brain_lab tmux sign_ademamix_20261007; /home/dimativator/.codex/sign-ademamix-20261007/controller.py",
+  "controller_state": "/home/dimativator/.codex/sign-ademamix-20261007/state.json"
+}
