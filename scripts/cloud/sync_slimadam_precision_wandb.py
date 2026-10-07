@@ -42,10 +42,16 @@ def main() -> None:
     os.environ["WANDB_BASE_URL"] = "https://wandb-radfan.ru"
     sync = os.environ.get("SYNC_COMPLETED", "0") == "1"
     api = wandb.Api(timeout=60) if sync else None
+    selected = set(os.environ.get("SYNC_PRECISIONS", "bf16,fp8_act").split(","))
+    assert selected.issubset({"bf16", "fp8_act", "fp8_full", "w16a16g32_fp8_states"})
     for precision, root in (
         ("bf16", Path("/home/jovyan/dimativator/500m-slimadam-precisions-20261002")),
         ("fp8_act", Path("/workspace-SR006.nfs2/dimativator/500m-slimadam-precisions-20261002")),
+        ("fp8_full", Path("/home/jovyan/dimativator/500m-slimadam-precisions-20261002")),
+        ("w16a16g32_fp8_states", Path("/workspace-SR006.nfs2/dimativator/500m-slimadam-precisions-20261002")),
     ):
+        if precision not in selected:
+            continue
         for phase, group, target in (
             ("2xC", "2xChinchilla_500M_slimadam_wd1e-4_precisions_2gpu", 150914),
             ("1xC_decay", "1xChinchilla_decay_500M_slimadam_wd1e-4_precisions_2gpu", 75457),
