@@ -152,7 +152,7 @@ def parse_args(base_parser, args, namespace):
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
-            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
+            "ademamix", "ademamix_sign", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
@@ -567,6 +567,12 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--ademamix_alpha", type=float, default=8.0)
     parser.add_argument("--ademamix_beta3_warmup_steps", type=int, default=None)
     parser.add_argument("--ademamix_alpha_warmup_steps", type=int, default=None)
+
+    # AdEMAMix-Sign
+    parser.add_argument("--ademamix_sign_beta3", type=float, default=0.9999)
+    parser.add_argument("--ademamix_sign_alpha", type=float, default=8.0)
+    parser.add_argument("--ademamix_sign_beta3_warmup_steps", type=int, default=None)
+    parser.add_argument("--ademamix_sign_alpha_warmup_steps", type=int, default=None)
     parser.add_argument("--newton_schulz_func", type=str, choices=['cesista', 'jordan', 'svd', 'express_orig', 'express_modified', '5777_left_1e_3', '5779_left_15e_4'], default="jordan")
     parser.add_argument("--muon_ns_steps", type=int, default=5)
     parser.add_argument("--muon_num_splits", type=int, default=1)

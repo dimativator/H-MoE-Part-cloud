@@ -15,7 +15,7 @@ from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFA
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
-from .sota_opt import AdEMAMix, FP8AdEMAMix, FP8SOAP, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
+from .sota_opt import AdEMAMix, AdEMAMixSign, FP8AdEMAMix, FP8SOAP, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
 from .multi_optimizer import MultiOptimizer
 
 
@@ -153,6 +153,18 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             optimizer = optimizer_cls(param_groups, qargs=qargs, **optimizer_kwargs)
         else:
             optimizer = optimizer_cls(param_groups, **optimizer_kwargs)
+    elif optimizer_name == "ademamix_sign":
+        if getattr(args, "fp8_optim", False):
+            raise ValueError("AdEMAMixSign does not implement FP8 optimizer states.")
+        optimizer = AdEMAMixSign(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.ademamix_sign_beta3),
+            alpha=args.ademamix_sign_alpha,
+            beta3_warmup=args.ademamix_sign_beta3_warmup_steps,
+            alpha_warmup=args.ademamix_sign_alpha_warmup_steps,
+            weight_decay=args.weight_decay,
+        )
     elif optimizer_name == "muon":
         for group in param_groups:
             if not group.get("is_proj_params", False):
