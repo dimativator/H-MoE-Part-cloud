@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import math
 import netrc
 from pathlib import Path
 import re
@@ -119,7 +120,11 @@ def main() -> None:
                     records = state["queue_A"]["results"] + state["queue_B"]["results"]
                     if {row["lr"] for row in records} != {"2e-3", "1e-3", "5e-4", "1e-4"}:
                         raise RuntimeError("Tuning grid incomplete")
-                    best = min(records, key=lambda row: (row["final_val_loss"], float(row["lr"])))
+                    eligible = [row for row in records if row["status"] == "verified"
+                                and math.isfinite(row["final_val_loss"])]
+                    if not eligible:
+                        raise RuntimeError("No finite completed LR candidate")
+                    best = min(eligible, key=lambda row: (row["final_val_loss"], float(row["lr"])))
                     state["best_lr"] = best["lr"]
                     state["selection"] = {"criterion": "minimum finite final validation loss at 39250 steps",
                                           "selected": best, "candidates": records}

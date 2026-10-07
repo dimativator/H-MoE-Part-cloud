@@ -71,6 +71,14 @@ class CloudSignCampaignTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 campaign.cleanup_checkpoint(output, root / "outside")
 
+    def test_numerical_failure_detection_ignores_partial_lines(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "metrics.jsonl"
+            path.write_text('{"iter": 50, "train/loss": 3.0}\n{"iter":')
+            self.assertIsNone(campaign.nonfinite_loss(path))
+            path.write_text('{"iter": 50, "train/loss": 3.0}\n{"iter": 100, "train/loss": NaN}\n')
+            self.assertEqual(campaign.nonfinite_loss(path)["step"], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

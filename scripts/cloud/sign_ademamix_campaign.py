@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -83,6 +84,9 @@ def verify(metrics: Path, target: int, run_id: str, *, smoke: bool = False) -> d
     losses = [float(row["final-val/loss"]) for row in finals if "final-val/loss" in row]
     if len(losses) != 1 or not math.isfinite(losses[0]):
         raise RuntimeError("Missing finite final validation loss")
+    if any(row.get("consumed_tokens") != target * 128 * 1024
+           for row in finals if row.get("event") == "validation"):
+        raise RuntimeError("Final token budget does not match the requested horizon")
     import wandb
     api = wandb.Api(timeout=30)
     for attempt in range(6):
@@ -112,6 +116,21 @@ def cleanup_checkpoint(output: Path, experiment: Path) -> None:
     emit("SIGN_CHECKPOINTS_REMOVED", {"path": str(checkpoints)})
 
 
+def nonfinite_loss(metrics: Path) -> dict | None:
+    if not metrics.exists():
+        return None
+    for line in metrics.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        for key in ("train/loss", "val/loss", "final-val/loss"):
+            value = row.get(key)
+            if isinstance(value, (int, float)) and not math.isfinite(value):
+                return {"step": row.get("iter"), "metric": key, "value": str(value)}
+    return None
+
+
 def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset: Path,
             world: int, *, resume: Path | None = None, milestones: tuple[int, ...] = (),
             smoke: bool = False) -> Path:
@@ -121,7 +140,12 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
     run_id = f"sas-{suffix}-{size}-{lr}-20261007" + ("-smoke" if smoke else "")
     experiment = output / group / name
     done = experiment / "verified.json"
+    diverged = experiment / "diverged.json"
     failed = experiment / "failed.json"
+    if diverged.exists():
+        if rank == 0:
+            emit("SIGN_RESULT", json.loads(diverged.read_text()))
+        return experiment
     if done.exists():
         if rank == 0:
             emit("SIGN_RESULT", json.loads(done.read_text()))
@@ -145,8 +169,34 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
         emit("SIGN_START", {"name": name, "run_id": run_id, "target": target, "gpus": world})
         atomic_json(experiment / "launch.json", {"command": launch, "run_id": run_id, "gpus": world})
     log = experiment / f"rank{rank}.log"
+    numerical = None
     with log.open("w") as stream:
-        status = subprocess.call(launch, cwd=ROOT, env=env, stdout=stream, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(launch, cwd=ROOT, env=env, stdout=stream,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        while process.poll() is None:
+            # A NaN/Inf run cannot contribute to LR selection. Stop only that
+            # single-GPU tuning process, retain diagnostics, then try the next LR.
+            if world == 1 and not smoke:
+                numerical = nonfinite_loss(experiment / "metrics.jsonl")
+                if numerical:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                    break
+            time.sleep(5)
+        status = process.wait()
+    if world == 1 and not smoke:
+        numerical = numerical or nonfinite_loss(experiment / "metrics.jsonl")
+    if numerical:
+        result = {"status": "diverged", "run_id": run_id, "lr": lr, "size": size,
+                  "name": name, "diagnostic": numerical,
+                  "url": f"https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{run_id}"}
+        atomic_json(diverged, result)
+        emit("SIGN_RESULT", result)
+        return experiment
     if status:
         if rank == 0:
             atomic_json(failed, {"status": "failed", "exit_code": status, "run_id": run_id})
