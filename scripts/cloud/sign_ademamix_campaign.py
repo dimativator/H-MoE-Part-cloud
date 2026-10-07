@@ -165,6 +165,11 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
     (output / "wandb").mkdir(exist_ok=True)
     launch = command(size, lr, target, name, group, output, dataset, world,
                      resume=resume, milestones=milestones, smoke=smoke)
+    # mlsub can allocate two GPUs to one MPI worker. Spawn both training ranks
+    # locally in that case, as in the existing Huawei launchers.
+    if int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) == 1 and world > 1:
+        launch = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                  f"--nproc_per_node={world}", *launch[1:]]
     if rank == 0:
         emit("SIGN_START", {"name": name, "run_id": run_id, "target": target, "gpus": world})
         atomic_json(experiment / "launch.json", {"command": launch, "run_id": run_id, "gpus": world})
@@ -274,6 +279,7 @@ def main() -> None:
     parser.add_argument("mode", choices=["probe", "audit", "smoke", "tune", "long"])
     parser.add_argument("--queue", choices=["A", "B"])
     parser.add_argument("--lr", choices=["2e-3", "1e-3", "5e-4", "1e-4"], default="1e-4")
+    parser.add_argument("--gpus", type=int, choices=[1, 2])
     parser.add_argument("--dataset", type=Path, default=Path("/workspace-SR006.nfs3/dimativator/fineweb-h200-packed"))
     parser.add_argument("--output", type=Path, default=Path("/home/jovyan/dimativator/sign-ademamix-20261007"))
     args = parser.parse_args()
@@ -285,10 +291,10 @@ def main() -> None:
     if args.mode == "audit":
         audit(args.output)
         return
-    world = int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1"))
-    expected = 2 if args.mode == "long" else world if args.mode == "smoke" else 1
-    if world != expected or world not in (1, 2):
-        raise RuntimeError(f"Expected {expected} GPU ranks, got {world}")
+    mpi_size = int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1"))
+    world = args.gpus or (2 if args.mode == "long" else 1)
+    if mpi_size not in (1, world) or (args.mode == "tune" and world != 1):
+        raise RuntimeError(f"Expected one MPI worker or {world} training ranks, got {mpi_size}")
     if int(os.environ.get("OMPI_COMM_WORLD_RANK", "0")) == 0:
         for query in [["nvidia-smi", "--query-gpu=index,name,memory.used,memory.free,utilization.gpu", "--format=csv"],
                       ["nvidia-smi", "--query-compute-apps=gpu_uuid,pid,used_memory", "--format=csv"]]:
