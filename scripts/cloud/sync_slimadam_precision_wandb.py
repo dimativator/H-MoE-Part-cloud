@@ -13,6 +13,11 @@ from wandb.proto import wandb_internal_pb2
 from wandb.sdk.internal.datastore import DataStore
 
 
+def final_loss_matches(value: object, expected: float) -> bool:
+    return (isinstance(value, (int, float)) and math.isfinite(value)
+            and math.isclose(value, expected, rel_tol=0, abs_tol=1e-12))
+
+
 def offline_name(run_dir: Path) -> str | None:
     config_file = run_dir / "files/config.yaml"
     if config_file.is_file():
@@ -84,13 +89,13 @@ def main() -> None:
             except wandb.errors.CommError as exc:
                 if "not find run" not in str(exc).lower() and "not found" not in str(exc).lower():
                     raise
-            if remote is None or remote.summary.get("final-val/loss") != losses[0]:
+            if remote is None or not final_loss_matches(remote.summary.get("final-val/loss"), losses[0]):
                 assert not synced, f"Synced marker exists but remote final differs: {run_id}"
                 subprocess.run(["wandb", "sync", "--entity", "andrey", "--project",
                                 "fp8-pretrain", "--mark-synced", str(run_dir)], check=True)
                 api.flush()
                 remote = api.run(f"andrey/fp8-pretrain/{run_id}")
-            assert remote.summary.get("final-val/loss") == losses[0], run_id
+            assert final_loss_matches(remote.summary.get("final-val/loss"), losses[0]), run_id
             assert remote.config.get("experiment_name") == name, run_id
             print("WANDB_VERIFIED", json.dumps({"name": name, "id": run_id,
                   "final_val": losses[0], "url": remote.url}), flush=True)
