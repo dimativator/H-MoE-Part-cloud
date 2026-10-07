@@ -201,16 +201,39 @@ def probe(dataset: Path) -> None:
                  [Path("/home/jovyan"), Path("/workspace-SR006.nfs2"), Path("/workspace-SR006.nfs3")]}})
 
 
+def audit(output: Path) -> None:
+    for launch_path in sorted(output.rglob("launch.json")):
+        experiment = launch_path.parent
+        launch = json.loads(launch_path.read_text())
+        command_args = launch["command"]
+        target = int(command_args[command_args.index("--iterations") + 1])
+        done = experiment / "verified.json"
+        if done.exists():
+            emit("SIGN_RESULT", json.loads(done.read_text()))
+            continue
+        result = verify(experiment / "metrics.jsonl", target, launch["run_id"], smoke=target == 2)
+        result.update(name=experiment.name, lr=command_args[command_args.index("--lr") + 1],
+                      size="257m" if "257m" in experiment.name else "500m",
+                      metrics=str(experiment / "metrics.jsonl"), recovered_verification=True)
+        atomic_json(done, result)
+        emit("SIGN_RESULT", result)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["probe", "smoke", "tune", "long"])
+    parser.add_argument("mode", choices=["probe", "audit", "smoke", "tune", "long"])
     parser.add_argument("--queue", choices=["A", "B"])
     parser.add_argument("--lr", choices=["2e-3", "1e-3", "5e-4", "1e-4"], default="1e-4")
     parser.add_argument("--dataset", type=Path, default=Path("/workspace-SR006.nfs3/dimativator/fineweb-h200-packed"))
     parser.add_argument("--output", type=Path, default=Path("/home/jovyan/dimativator/sign-ademamix-20261007"))
     args = parser.parse_args()
+    os.environ["WANDB_BASE_URL"] = "https://wandb-radfan.ru"
+    os.environ["WANDB_ENTITY"] = "andrey"
     if args.mode == "probe":
         probe(args.dataset)
+        return
+    if args.mode == "audit":
+        audit(args.output)
         return
     world = int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1"))
     expected = 2 if args.mode == "long" else world if args.mode == "smoke" else 1
