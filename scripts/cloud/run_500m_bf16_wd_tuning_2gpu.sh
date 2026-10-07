@@ -5,6 +5,8 @@ set -euo pipefail
 QUEUE_ID=${QUEUE_ID:?Set QUEUE_ID=A or B}
 MODE=${MODE:-full}
 case "${QUEUE_ID}" in A) OPTIMIZERS=(frugal galore) ;; B) OPTIMIZERS=(frugal_mm apollo) ;; *) exit 2 ;; esac
+SKIP_OPTIMIZER=${SKIP_OPTIMIZER:-}
+case "${SKIP_OPTIMIZER}" in ''|frugal|galore|frugal_mm|apollo) ;; *) echo 'Invalid SKIP_OPTIMIZER' >&2; exit 2 ;; esac
 case "${MODE}" in smoke|full|probe) ;; *) exit 2 ;; esac
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
 RESULTS_DIR=${RESULTS_DIR:-/home/jovyan/dimativator/500m-bf16-wd-tuning-20261006}
@@ -67,6 +69,10 @@ on_exit() {
 }
 trap on_exit EXIT
 for OPTIMIZER in "${OPTIMIZERS[@]}"; do
+    if [[ "${OPTIMIZER}" == "${SKIP_OPTIMIZER}" ]]; then
+        echo "SKIP_USER_OPTIMIZER=${OPTIMIZER}"
+        continue
+    fi
     OPT_ARGS=()
     case "${OPTIMIZER}" in
         frugal) OPT=coord_adamw; LR=1e-3; BETA2=0.999 ;;
