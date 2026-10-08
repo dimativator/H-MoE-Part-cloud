@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
@@ -174,6 +174,10 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--beta1", default=0.9, type=float)
     parser.add_argument("--beta2", default=0.95, type=float)
     parser.add_argument("--grad-clip", default=1.0, type=float)
+    parser.add_argument("--softmuon-sign-fraction", default=0.9, type=float)
+    parser.add_argument("--softmuon-eps", default=1e-4, type=float)
+    parser.add_argument("--softmuon-newton-iters", default=10, type=int)
+    parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging
     parser.add_argument("--weight-average", action="store_true")

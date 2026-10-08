@@ -215,6 +215,8 @@ def main(args):
         )
 
     model = get_model(args).to(args.device)
+    if args.model_parameter_dtype == "bfloat16":
+        model = model.to(dtype=torch.bfloat16)
     print(f"\nModel:\n{model}")
 
     # ── Riemannian LoRA: replace Linear modules with RiemannianLoraLinear *before* DDP ──
@@ -438,6 +440,30 @@ def main(args):
             quantile=args.solo_quantile,
             block_size=args.solo_block_sizes[0],
         )
+    elif args.opt == "softmuon":
+        from third_party.softsign.softmuon import SingleDeviceSoftMuonWithAuxAdam
+        if args.fp8_optim:
+            raise ValueError("SoftMuon campaign requires FP32 optimizer states")
+        if not 0 < args.softmuon_sign_fraction < 1:
+            raise ValueError("SoftMuon sign fraction must be in (0, 1)")
+        raw_model = distributed_backend.get_raw_model(model)
+        matrices, auxiliary = [], []
+        for name, p in raw_model.named_parameters():
+            for translated in distributed_backend.translate_model_parameter_name_for_node(name):
+                param = param_name_mapping[translated]
+                if param.ndim == 2 and not any(k in name for k in ("wte", "lm_head", "embed")):
+                    matrices.append(param)
+                else:
+                    auxiliary.append(param)
+        sign_iters = int(args.iterations * args.softmuon_sign_fraction)
+        opt = SingleDeviceSoftMuonWithAuxAdam([
+            dict(params=matrices, use_muon=True, lr=args.lr, weight_decay=args.weight_decay,
+                 momentum=0.95, sign_iters=sign_iters, transition_iters=args.iterations-sign_iters,
+                 eps=args.softmuon_eps, newton_iters=args.softmuon_newton_iters),
+            dict(params=auxiliary, use_muon=False, lr=args.lr, weight_decay=args.weight_decay,
+                 betas=(args.beta1, args.beta2), eps=args.eps),
+        ])
+        print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32", flush=True)
     elif args.opt in ("muon", "muonlite"):
         from third_party.lite.muonlite import MuonLite
         raw_model = distributed_backend.get_raw_model(model)
