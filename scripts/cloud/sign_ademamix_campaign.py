@@ -116,7 +116,7 @@ def cleanup_checkpoint(output: Path, experiment: Path) -> None:
     emit("SIGN_CHECKPOINTS_REMOVED", {"path": str(checkpoints)})
 
 
-def nonfinite_loss(metrics: Path) -> dict | None:
+def nonfinite_loss(metrics: Path, log: Path | None = None) -> dict | None:
     if not metrics.exists():
         return None
     for line in metrics.read_text().splitlines():
@@ -128,6 +128,15 @@ def nonfinite_loss(metrics: Path) -> dict | None:
             value = row.get(key)
             if isinstance(value, (int, float)) and not math.isfinite(value):
                 return {"step": row.get("iter"), "metric": key, "value": str(value)}
+    # The strict JSON logger can fail before writing the offending Inf/NaN.
+    # Classify only this explicit numerical exception, never arbitrary failures.
+    if log is not None and log.exists():
+        text = log.read_text(errors="replace")
+        if "_log_local_metric" in text and any(
+                f"ValueError: Out of range float values are not JSON compliant: {value}" in text
+                for value in ("inf", "-inf", "nan")):
+            return {"metric": "local_metric", "value": "nonfinite",
+                    "reason": "Strict JSON metric serialization rejected Inf/NaN"}
     return None
 
 
@@ -157,6 +166,15 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
         if rank == 0:
             emit("SIGN_RESULT", json.loads(done.read_text()))
         return experiment
+    if rank == 0 and world == 1 and not smoke and (experiment / "metrics.jsonl").exists():
+        numerical = nonfinite_loss(experiment / "metrics.jsonl", experiment / "rank0.log")
+        if numerical:
+            result = {"status": "diverged", "run_id": run_id, "lr": lr, "size": size,
+                      "name": name, "diagnostic": numerical,
+                      "url": f"https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{run_id}"}
+            atomic_json(diverged, result)
+            emit("SIGN_RESULT", result)
+            return experiment
     if rank == 0 and (experiment / "metrics.jsonl").exists():
         raise RuntimeError(f"Refusing to overwrite existing metrics: {experiment}")
     experiment.mkdir(parents=True, exist_ok=True)
@@ -199,7 +217,7 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
             time.sleep(5)
         status = process.wait()
     if world == 1 and not smoke:
-        numerical = numerical or nonfinite_loss(experiment / "metrics.jsonl")
+        numerical = numerical or nonfinite_loss(experiment / "metrics.jsonl", log)
     if numerical:
         result = {"status": "diverged", "run_id": run_id, "lr": lr, "size": size,
                   "name": name, "diagnostic": numerical,

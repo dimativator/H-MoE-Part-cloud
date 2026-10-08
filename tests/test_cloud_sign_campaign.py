@@ -79,6 +79,18 @@ class CloudSignCampaignTest(unittest.TestCase):
             path.write_text('{"iter": 50, "train/loss": 3.0}\n{"iter": 100, "train/loss": NaN}\n')
             self.assertEqual(campaign.nonfinite_loss(path)["step"], 100)
 
+    def test_strict_logger_overflow_is_numerical_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            metrics = Path(temporary) / "metrics.jsonl"
+            log = Path(temporary) / "rank0.log"
+            metrics.write_text('{"iter": 20250, "train/loss": 253.5}\n')
+            log.write_text("_log_local_metric\nValueError: Out of range float values are not JSON compliant: inf")
+            self.assertEqual(campaign.nonfinite_loss(metrics, log)["value"], "nonfinite")
+            log.write_text("RuntimeError: CUDA out of memory")
+            self.assertIsNone(campaign.nonfinite_loss(metrics, log))
+            log.write_text("ValueError: Out of range float values are not JSON compliant: inf")
+            self.assertIsNone(campaign.nonfinite_loss(metrics, log))
+
     def test_two_gpu_single_worker_uses_torchrun(self):
         launch = [sys.executable, "src/main.py", "--experiment-name", "trial"]
         actual = campaign.training_launcher(launch, world=2, mpi_size=1)
