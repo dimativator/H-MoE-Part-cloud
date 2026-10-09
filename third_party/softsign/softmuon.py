@@ -117,13 +117,23 @@ def get_temperature_schedule(
     eps: float = 1e-4,
     newton_iters: int = 10,
     tmax: float = 1e9,
+    momentum_state=None,
+    beta: float = 0.95,
 ) -> torch.Tensor:
-    """Build a transition temperature schedule from gradient singular values."""
+    """Build a schedule from updated momentum, or gradients for legacy wrappers."""
     device = params[0].device
     all_sigmas = []
     for p in params:
         grad = p.grad if p.grad is not None else torch.zeros_like(p.data)
-        g2d = _grad_as_2d_for_svd(grad.float())
+        matrix = grad.float()
+        if momentum_state is not None:
+            momentum = momentum_state[p].get("momentum_buffer")
+            if momentum is None:
+                momentum = torch.zeros_like(p, dtype=torch.float32)
+            # Preview M_{k+1} without mutating the buffer: the update below
+            # advances it exactly once, using the same lerp operation.
+            matrix = momentum.lerp(matrix, 1 - beta)
+        g2d = _grad_as_2d_for_svd(matrix)
         _, s, _ = cans_svd(g2d)
         all_sigmas.append(s.flatten())
 
@@ -468,7 +478,10 @@ class SingleDeviceSoftMuonWithAuxAdam(torch.optim.Optimizer):
                 eps, ni, tmax = group["eps"], group["newton_iters"], group["tmax"]
                 if si is not None and ti is not None:
                     if current_iter == si + 1:
-                        sch = get_temperature_schedule(params, ti, eps, ni, tmax)
+                        sch = get_temperature_schedule(
+                            params, ti, eps, ni, tmax,
+                            momentum_state=self.state, beta=group["momentum"],
+                        )
                         group["schedule"] = sch
                 sched = group["schedule"]
                 if sched is not None and si is not None and current_iter > si:
@@ -486,6 +499,7 @@ class SingleDeviceSoftMuonWithAuxAdam(torch.optim.Optimizer):
                         p.grad.float(),
                         state["momentum_buffer"],
                         beta=group["momentum"],
+                        nesterov=False,
                         temp=temperature,
                     )
                     p.mul_(1 - group["lr"] * group["weight_decay"])

@@ -2,11 +2,13 @@
 set -euo pipefail
 python - <<'PY'
 import json
+import os
 from pathlib import Path
-root = Path('/workspace-SR006.nfs3/dimativator/softmuon-500m-20261008')
+root = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs3/dimativator/softmuon-500m-20261008'))
+group = os.environ.get('GROUP', 'softmuon_500m_1xC_20261008')
 for precision in ['bf16', 'fp8_act', 'bf16_g16']:
-    name = 'softmuon_500m_' + precision + '_full'
-    path = root / 'softmuon_500m_1xC_20261008' / name / 'metrics.jsonl'
+    name = 'softmuon_500m_' + precision + '_full' + os.environ.get('NAME_SUFFIX', '')
+    path = root / group / name / 'metrics.jsonl'
     print('PRECISION', precision, flush=True)
     if path.exists():
         records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]

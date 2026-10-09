@@ -7,10 +7,10 @@ case "$PRECISION" in bf16|fp8_act|bf16_g16) ;; *) exit 2 ;; esac
 case "$MODE" in smoke|full) ;; *) exit 2 ;; esac
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/softmuon-500m-20261008}
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
-GROUP=softmuon_500m_1xC_20261008
+GROUP=${GROUP:-softmuon_500m_1xC_20261008}
 RANK_ID=${OMPI_COMM_WORLD_RANK:-0}
 MPI_SIZE=${OMPI_COMM_WORLD_SIZE:-1}
-NAME=softmuon_500m_${PRECISION}_${MODE}
+NAME=softmuon_500m_${PRECISION}_${MODE}${NAME_SUFFIX:-}
 mkdir -p "$RESULTS_DIR/logs" "$RESULTS_DIR/wandb"
 exec > >(tee -a "$RESULTS_DIR/logs/${NAME}_rank${RANK_ID}.log") 2>&1
 echo "RUN_START=$(date --iso-8601=seconds) PRECISION=$PRECISION MODE=$MODE GLOBAL_BATCH=128"
@@ -46,6 +46,7 @@ elif [[ "$PRECISION" == bf16_g16 ]]; then
     ARGS+=(--model-parameter-dtype bfloat16)
 fi
 if [[ "$MODE" == smoke ]]; then
+    python scripts/cloud/test_softmuon_algorithm3.py
     python scripts/cloud/test_softmuon.py
     ARGS+=(--early-stop-iteration 2 --eval-interval 2 --eval-batches 1 --log-interval 1)
 else
