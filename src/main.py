@@ -463,7 +463,7 @@ def main(args):
             dict(params=auxiliary, use_muon=False, lr=args.lr, weight_decay=args.weight_decay,
                  betas=(args.beta1, args.beta2), eps=args.eps),
         ])
-        print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32", flush=True)
+        print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32 nesterov=False temperature_spectrum=updated_momentum", flush=True)
     elif args.opt in ("muon", "muonlite"):
         from third_party.lite.muonlite import MuonLite
         raw_model = distributed_backend.get_raw_model(model)
