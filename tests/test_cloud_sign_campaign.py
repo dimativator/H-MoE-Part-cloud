@@ -92,7 +92,7 @@ class CloudSignCampaignTest(unittest.TestCase):
             self.assertIsNone(campaign.nonfinite_loss(metrics, log))
 
     def test_four_gpu_precision_grid_and_data_batch(self):
-        for precision in ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32"):
+        for precision in ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32", "w16a16g16_fp8"):
             args = self.parsed("500m", 150914, 4, precision=precision, milestones=(67911,))
             backend = DataParallelDistributedBackend.__new__(DataParallelDistributedBackend)
             backend.local_rank = 0
@@ -101,8 +101,8 @@ class CloudSignCampaignTest(unittest.TestCase):
             self.assertEqual(args.batch_size, 8)
             self.assertEqual(args.acc_steps, 4)
             self.assertEqual(4 * args.batch_size * args.acc_steps, 128)
-            self.assertEqual(args.fp8, precision != "w16a16g16_fp32")
-            self.assertEqual(args.fp8_optim, precision == "w8a8g8_fp8")
+            self.assertEqual(args.fp8, precision.startswith("w8a8g8"))
+            self.assertEqual(args.fp8_optim, precision.endswith("_fp8"))
             self.assertEqual(args.weight_decay, 1e-4)
             self.assertEqual(args.ademamix_sign_alpha_warmup_steps, 150914)
 

@@ -10,7 +10,7 @@ import sys
 import sign_ademamix_campaign as campaign
 
 
-PRECISIONS = ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32")
+PRECISIONS = ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp8")
 
 
 def main() -> None:
@@ -28,7 +28,7 @@ def main() -> None:
     qargs = SimpleNamespace(first_order_bit="E4M3", second_order_bit="E4M3",
         first_order_expansion="expand", second_order_expansion="expand", qgroup_size=128, expand_min=16)
     parameter = torch.nn.Parameter(torch.ones(256, device="cuda", dtype=torch.float32))
-    config = SimpleNamespace(opt="ademamix_sign", fp8_optim=args.precision == "w8a8g8_fp8",
+    config = SimpleNamespace(opt="ademamix_sign", fp8_optim=args.precision in ("w8a8g8_fp8", "w16a16g16_fp8"),
         lr=1e-4, beta1=0.9, ademamix_sign_beta3=0.9999, ademamix_sign_alpha=8,
         ademamix_sign_beta3_warmup_steps=150914, ademamix_sign_alpha_warmup_steps=150914, weight_decay=1e-4)
     optimizer = get_optimizer([{"params": [parameter]}], config, qargs=qargs)
