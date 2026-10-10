@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Three independent 4-GPU precision queues, each with a verified smoke and cooldown."""
+"""Three independent precision queues, each with a verified smoke and cooldown."""
 import argparse
 import json
 import os
@@ -16,6 +16,7 @@ PRECISIONS = ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g32_fp8")
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("precision", choices=PRECISIONS)
+    parser.add_argument("--gpus", type=int, choices=(2, 4), default=4)
     parser.add_argument("--output", type=Path, default=Path("/home/jovyan/dimativator/sign-ademamix-precision-20261010"))
     parser.add_argument("--dataset", type=Path, default=Path("/workspace-SR006.nfs3/dimativator/fineweb-h200-packed"))
     args = parser.parse_args()
@@ -42,11 +43,11 @@ def main() -> None:
     torch.cuda.empty_cache()
     metadata = json.loads((args.dataset / "packed_metadata.json").read_text())
     assert int(metadata["iterations"]) >= 150914
-    assert int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) in (1, 4)
+    assert int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) in (1, args.gpus)
     if shutil.disk_usage(args.output.parent).free < 9_000_000_000:
         raise RuntimeError("Need 9 GB checkpoint headroom")
-    common = dict(output=args.output, dataset=args.dataset, world=4, precision=args.precision, run_date="20261010")
-    campaign.run_one("500m", "1e-4", 2, args.precision + "_smoke4gpu", smoke=True, **common)
+    common = dict(output=args.output, dataset=args.dataset, world=args.gpus, precision=args.precision, run_date="20261010")
+    campaign.run_one("500m", "1e-4", 2, args.precision + f"_smoke{args.gpus}gpu", smoke=True, **common)
     trunk = campaign.run_one("500m", "1e-4", 150914, args.precision + "_full2xc", milestones=(67911,), **common)
     campaign.run_one("500m", "1e-4", 75457, args.precision + "_decay1xc", resume=trunk / "ckpts/67911", **common)
     if int(os.environ.get("OMPI_COMM_WORLD_RANK", "0")) == 0:
