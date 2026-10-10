@@ -3,7 +3,7 @@
   "precisions": [
     "w8a8g8_fp32",
     "w8a8g8_fp8",
-    "w16a16g16_fp8"
+    "w16a16g32_fp8"
   ],
   "gpus_per_job": 4,
   "max_parallel_jobs": 3,

@@ -66,10 +66,10 @@ def command(size: str, lr: str, target: int, name: str, group: str,
     if precision in ("w8a8g8_fp32", "w8a8g8_fp8"):
         result += ["--fp8", "--fp8-fabit", "E4M3", "--fp8-fwbit", "E4M3",
                    "--fp8-babit", "E5M2", "--fp8-bwbit", "E5M2", "--fp8-group-size", "16"]
-    if precision in ("w8a8g8_fp8", "w16a16g16_fp8"):
+    if precision in ("w8a8g8_fp8", "w16a16g32_fp8"):
         result += ["--fp8-optim", "--fp8-qgroup-size", "128", "--fp8-first-order-bit", "E4M3",
                    "--fp8-second-order-bit", "E4M3", "--fp8-expansion", "expand"]
-    if precision not in (None, "w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32", "w16a16g16_fp8"):
+    if precision not in (None, "w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32", "w16a16g32_fp8"):
         raise ValueError(f"Unknown precision: {precision}")
     if not smoke:
         result += ["--downstream-eval-enabled", "--downstream-eval-interval", "2000",
@@ -111,7 +111,7 @@ def verify(metrics: Path, target: int, run_id: str, *, smoke: bool = False, prec
     assert run.config["iterations"] == target
     assert run.config["dtype"] == "bfloat16"
     assert run.config["fp8"] == (precision in ("w8a8g8_fp32", "w8a8g8_fp8"))
-    assert run.config["fp8_optim"] == (precision in ("w8a8g8_fp8", "w16a16g16_fp8"))
+    assert run.config["fp8_optim"] == (precision in ("w8a8g8_fp8", "w16a16g32_fp8"))
     assert run.config["batch_size"] * run.config["acc_steps"] * run.config["world_size"] == 128
     return {"run_id": run_id, "target": target, "final_val_loss": losses[0],
             "url": f"https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{run_id}", "status": "verified"}

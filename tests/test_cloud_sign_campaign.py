@@ -92,7 +92,7 @@ class CloudSignCampaignTest(unittest.TestCase):
             self.assertIsNone(campaign.nonfinite_loss(metrics, log))
 
     def test_four_gpu_precision_grid_and_data_batch(self):
-        for precision in ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32", "w16a16g16_fp8"):
+        for precision in ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32", "w16a16g32_fp8"):
             args = self.parsed("500m", 150914, 4, precision=precision, milestones=(67911,))
             backend = DataParallelDistributedBackend.__new__(DataParallelDistributedBackend)
             backend.local_rank = 0
