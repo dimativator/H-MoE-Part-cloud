@@ -1,0 +1,24 @@
+{
+  "campaign": "sign-ademamix-precision-20261010",
+  "precisions": [
+    "w8a8g8_fp32",
+    "w8a8g8_fp8",
+    "w16a16g16_fp32"
+  ],
+  "gpus_per_job": 4,
+  "max_parallel_jobs": 3,
+  "model": "500m",
+  "lr": 0.0001,
+  "weight_decay": 0.0001,
+  "global_batch": 128,
+  "sequence_length": 1024,
+  "iterations": 150914,
+  "decay_iterations": 75457,
+  "checkpoint_step": 67911,
+  "states_fp8_format": "E4M3",
+  "state_group_size": 128,
+  "state_expansion": "expand",
+  "data": "fineweb-h200-packed",
+  "wandb": "https://wandb-radfan.ru/andrey/fp8-pretrain",
+  "spreadsheet_id": "1xpgQuKg_aAtzHIdOLUrXRK5cvyjpP_lpXOdpDCRaLe4"
+}

@@ -35,7 +35,8 @@ def atomic_json(path: Path, data: dict) -> None:
 
 def command(size: str, lr: str, target: int, name: str, group: str,
             output: Path, dataset: Path, world: int, *, resume: Path | None = None,
-            milestones: tuple[int, ...] = (), smoke: bool = False) -> list[str]:
+            milestones: tuple[int, ...] = (), smoke: bool = False,
+            precision: str | None = None) -> list[str]:
     layers, width, heads = (12, 1024, 8) if size == "257m" else (18, 1280, 20)
     wd = "0.1" if size == "257m" else "1e-4"
     horizon = BUDGETS[size][4 if size == "257m" and (target > 39250 or resume) else 2 if size == "500m" else 1]
@@ -51,7 +52,7 @@ def command(size: str, lr: str, target: int, name: str, group: str,
         "--ademamix_sign_beta3", "0.9999", "--ademamix_sign_alpha", "8",
         "--ademamix_sign_beta3_warmup_steps", str(horizon),
         "--ademamix_sign_alpha_warmup_steps", str(horizon),
-        "--batch-size", "32" if world == 1 else "16", "--acc-steps", "4" if world == 1 else "8",
+        "--batch-size", str(32 // world), "--acc-steps", str(4 * world),
         "--eval-batch-size", "32", "--scheduler", "none" if smoke else "wsd",
         "--warmup-steps", "0" if smoke or resume else "2000", "--iterations", str(target),
         "--wsd-fract-decay", "1.0" if resume else "0.1", "--wsd-final-lr-scale", "0",
@@ -62,6 +63,14 @@ def command(size: str, lr: str, target: int, name: str, group: str,
         "--metrics-jsonl", str(output / group / name / "metrics.jsonl"),
         "--wandb", "--wandb-project", "fp8-pretrain", "--wandb-group", group,
         "--wandb-tags", "Sign-AdEMAMix", CAMPAIGN, size, "BF16", f"lr{lr}", f"{world}gpu"]
+    if precision in ("w8a8g8_fp32", "w8a8g8_fp8"):
+        result += ["--fp8", "--fp8-fabit", "E4M3", "--fp8-fwbit", "E4M3",
+                   "--fp8-babit", "E5M2", "--fp8-bwbit", "E5M2", "--fp8-group-size", "16"]
+    if precision == "w8a8g8_fp8":
+        result += ["--fp8-optim", "--fp8-qgroup-size", "128", "--fp8-first-order-bit", "E4M3",
+                   "--fp8-second-order-bit", "E4M3", "--fp8-expansion", "expand"]
+    if precision not in (None, "w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32"):
+        raise ValueError(f"Unknown precision: {precision}")
     if not smoke:
         result += ["--downstream-eval-enabled", "--downstream-eval-interval", "2000",
             "--downstream-task-group", "basic_v2", "--lm-eval-enabled", "--lm-eval-interval", "2000",
@@ -75,7 +84,7 @@ def command(size: str, lr: str, target: int, name: str, group: str,
     return result
 
 
-def verify(metrics: Path, target: int, run_id: str, *, smoke: bool = False) -> dict:
+def verify(metrics: Path, target: int, run_id: str, *, smoke: bool = False, precision: str | None = None) -> dict:
     rows = [json.loads(line) for line in metrics.read_text().splitlines() if line.strip()]
     finals = [row for row in rows if row.get("iter") == target]
     required = {"validation"} if smoke else {"validation", "downstream", "lm_eval"}
@@ -100,7 +109,9 @@ def verify(metrics: Path, target: int, run_id: str, *, smoke: bool = False) -> d
         time.sleep(5)
     assert run.config["opt"] == "ademamix_sign"
     assert run.config["iterations"] == target
-    assert run.config["dtype"] == "bfloat16" and not run.config["fp8"] and not run.config["fp8_optim"]
+    assert run.config["dtype"] == "bfloat16"
+    assert run.config["fp8"] == (precision in ("w8a8g8_fp32", "w8a8g8_fp8"))
+    assert run.config["fp8_optim"] == (precision == "w8a8g8_fp8")
     assert run.config["batch_size"] * run.config["acc_steps"] * run.config["world_size"] == 128
     return {"run_id": run_id, "target": target, "final_val_loss": losses[0],
             "url": f"https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{run_id}", "status": "verified"}
@@ -149,11 +160,11 @@ def training_launcher(launch: list[str], world: int, mpi_size: int) -> list[str]
 
 def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset: Path,
             world: int, *, resume: Path | None = None, milestones: tuple[int, ...] = (),
-            smoke: bool = False) -> Path:
+            smoke: bool = False, precision: str | None = None, run_date: str = "20261007") -> Path:
     rank = int(os.environ.get("OMPI_COMM_WORLD_RANK", "0"))
     group = CAMPAIGN + ("-smoke" if smoke else "-" + size)
     name = f"{size}_ademamix_sign_lr{lr}_{suffix}"
-    run_id = f"sas-{suffix}-{size}-{lr}-20261007" + ("-smoke" if smoke else "")
+    run_id = f"sas-{suffix}-{size}-{lr}-{run_date}" + ("-smoke" if smoke else "")
     experiment = output / group / name
     done = experiment / "verified.json"
     diverged = experiment / "diverged.json"
@@ -183,13 +194,14 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
         WANDB_RUN_ID=run_id, WANDB_RESUME="never", WANDB_DIR=str(output / "wandb"),
         PYTHONUNBUFFERED="1", TOKENIZERS_PARALLELISM="false", FINEWEB_LOG_DATA_HASHES="1",
         PYTORCH_ALLOC_CONF="expandable_segments:True",
+        TRITON_CACHE_DIR=f"/tmp/triton-sign-{run_date}-{suffix}-rank{rank}",
         RANK=str(rank), WORLD_SIZE=str(world),
         LOCAL_RANK=os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", "0"),
         MASTER_ADDR=os.environ.get("MASTER_ADDR", socket.gethostname()),
         MASTER_PORT=os.environ.get("MASTER_PORT", "29500"))
     (output / "wandb").mkdir(exist_ok=True)
     launch = command(size, lr, target, name, group, output, dataset, world,
-                     resume=resume, milestones=milestones, smoke=smoke)
+                     resume=resume, milestones=milestones, smoke=smoke, precision=precision)
     # mlsub can allocate two GPUs to one MPI worker. Spawn both training ranks
     # locally in that case, as in the existing Huawei launchers.
     launch = training_launcher(launch, world, int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")))
@@ -232,7 +244,7 @@ def run_one(size: str, lr: str, target: int, suffix: str, output: Path, dataset:
         raise RuntimeError(f"Training process failed: {name}, rank={rank}, code={status}")
     if rank == 0:
         try:
-            result = verify(experiment / "metrics.jsonl", target, run_id, smoke=smoke)
+            result = verify(experiment / "metrics.jsonl", target, run_id, smoke=smoke, precision=precision)
         except Exception:
             atomic_json(failed, {"status": "verification_failed", "run_id": run_id})
             raise

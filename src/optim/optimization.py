@@ -15,7 +15,7 @@ from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFA
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
-from .sota_opt import AdEMAMix, AdEMAMixSign, FP8AdEMAMix, FP8SOAP, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
+from .sota_opt import AdEMAMix, AdEMAMixSign, FP8AdEMAMixSign, FP8AdEMAMix, FP8SOAP, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
 from .multi_optimizer import MultiOptimizer
 
 
@@ -154,11 +154,13 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         else:
             optimizer = optimizer_cls(param_groups, **optimizer_kwargs)
     elif optimizer_name == "ademamix_sign":
-        if getattr(args, "fp8_optim", False):
-            raise ValueError("AdEMAMixSign does not implement FP8 optimizer states.")
-        optimizer = AdEMAMixSign(
+        optimizer_cls = FP8AdEMAMixSign if getattr(args, "fp8_optim", False) else AdEMAMixSign
+        if optimizer_cls is FP8AdEMAMixSign and qargs is None:
+            raise ValueError("FP8AdEMAMixSign requires qargs from --fp8-optim.")
+        optimizer = optimizer_cls(
             param_groups,
             lr=args.lr,
+            **({"qargs": qargs} if optimizer_cls is FP8AdEMAMixSign else {}),
             betas=(args.beta1, args.ademamix_sign_beta3),
             alpha=args.ademamix_sign_alpha,
             beta3_warmup=args.ademamix_sign_beta3_warmup_steps,

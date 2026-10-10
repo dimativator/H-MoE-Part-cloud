@@ -1,5 +1,6 @@
 from .ademamix import AdEMAMix
 from .ademamix_sign import AdEMAMixSign
+from .fp8_ademamix_sign import FP8AdEMAMixSign
 from .fp8_ademamix import FP8AdEMAMix
 from .fp8_soap import FP8SOAP
 # from .muon import Muon, DistributedMuon

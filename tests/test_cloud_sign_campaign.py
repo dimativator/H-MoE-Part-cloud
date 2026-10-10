@@ -91,6 +91,21 @@ class CloudSignCampaignTest(unittest.TestCase):
             log.write_text("ValueError: Out of range float values are not JSON compliant: inf")
             self.assertIsNone(campaign.nonfinite_loss(metrics, log))
 
+    def test_four_gpu_precision_grid_and_data_batch(self):
+        for precision in ("w8a8g8_fp32", "w8a8g8_fp8", "w16a16g16_fp32"):
+            args = self.parsed("500m", 150914, 4, precision=precision, milestones=(67911,))
+            backend = DataParallelDistributedBackend.__new__(DataParallelDistributedBackend)
+            backend.local_rank = 0
+            backend.get_world_size = lambda: 4
+            args = backend.get_adjusted_args_for_process(args)
+            self.assertEqual(args.batch_size, 8)
+            self.assertEqual(args.acc_steps, 4)
+            self.assertEqual(4 * args.batch_size * args.acc_steps, 128)
+            self.assertEqual(args.fp8, precision != "w16a16g16_fp32")
+            self.assertEqual(args.fp8_optim, precision == "w8a8g8_fp8")
+            self.assertEqual(args.weight_decay, 1e-4)
+            self.assertEqual(args.ademamix_sign_alpha_warmup_steps, 150914)
+
     def test_two_gpu_single_worker_uses_torchrun(self):
         launch = [sys.executable, "src/main.py", "--experiment-name", "trial"]
         actual = campaign.training_launcher(launch, world=2, mpi_size=1)
