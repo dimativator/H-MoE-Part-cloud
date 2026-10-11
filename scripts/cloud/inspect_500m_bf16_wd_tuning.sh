@@ -5,6 +5,7 @@ df -h /home/jovyan /workspace-SR006.nfs2 /workspace-SR006.nfs3
 python - <<'PY'
 import json
 import math
+import re
 from pathlib import Path
 roots = {
     'A': Path('/home/jovyan/dimativator/500m-bf16-wd-tuning-20261006'),
@@ -12,6 +13,15 @@ roots = {
 }
 for queue, optimizers in (('A', ('frugal', 'galore')), ('B', ('frugal_mm', 'apollo'))):
     root = roots[queue]
+    if queue == 'A':
+        for rank in (0, 1):
+            diagnostic_log = root / 'logs' / f'queue_A_full_rank{rank}.log'
+            if diagnostic_log.is_file():
+                with diagnostic_log.open('rb') as stream:
+                    stream.seek(max(0, diagnostic_log.stat().st_size - 12000))
+                    tail_text = stream.read().decode(errors='replace')
+                tail_text = re.sub(r'(?i)((?:api[_-]?key|authorization|token|password)\s*[:=]\s*)\S+', r'\1[REDACTED]', tail_text)
+                print('WD_DIAGNOSTIC_TAIL', rank, json.dumps(tail_text), flush=True)
     for opt in optimizers:
         for wd in ('1e-2', '1e-3', '1e-4'):
             name = f'llama500M_{opt}_bf16_wd{wd}_1xC_warmup2000_2gpu_20261006'
