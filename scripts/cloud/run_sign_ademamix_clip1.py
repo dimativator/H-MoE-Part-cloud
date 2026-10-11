@@ -21,7 +21,8 @@ experiment.mkdir(parents=True, exist_ok=True)
 (root / 'wandb').mkdir(exist_ok=True)
 os.environ.update(WANDB_MODE='offline', WANDB_BASE_URL='https://wandb-radfan.ru',
     WANDB_ENTITY='andrey', WANDB_RUN_ID=run_id, WANDB_DIR=str(root / 'wandb'),
-    RANK='0', WORLD_SIZE='1', LOCAL_RANK='0', PYTHONUNBUFFERED='1',
+    RANK='0', WORLD_SIZE='1', LOCAL_RANK='0', MASTER_ADDR='127.0.0.1',
+    MASTER_PORT='29500', PYTHONUNBUFFERED='1',
     TOKENIZERS_PARALLELISM='false', TRITON_CACHE_DIR='/tmp/sign-clip1-20261011')
 command = campaign.command('257m', '1e-4', 39250, name, group, root,
     Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed'), 1)
