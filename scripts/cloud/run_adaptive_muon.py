@@ -64,7 +64,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     rendezvous = wait_json(ready)
     env = os.environ.copy()
     env.update(PYTHONUNBUFFERED='1', TOKENIZERS_PARALLELISM='false',
-               PYTORCH_ALLOC_CONF='expandable_segments:True', WANDB_MODE='online',
+               PYTORCH_ALLOC_CONF='expandable_segments:True', WANDB_MODE=os.environ.get('WANDB_MODE', 'offline'),
                WANDB_BASE_URL='https://wandb-radfan.ru', WANDB_ENTITY='andrey',
                WANDB_DIR=str(ROOT / 'wandb'), WANDB_RUN_ID=f'adapt-{name}-20261011',
                TRITON_CACHE_DIR=f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
