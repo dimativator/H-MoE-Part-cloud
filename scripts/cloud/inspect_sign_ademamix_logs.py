@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-for root in [Path("/home/jovyan/dimativator/sign-ademamix-20261007"), Path("/home/jovyan/dimativator/sign-ademamix-precision-20261010")]:
+for root in [Path("/home/jovyan/dimativator/sign-ademamix-20261007"), Path("/home/jovyan/dimativator/sign-ademamix-precision-20261010"), Path("/home/jovyan/dimativator/sign-ademamix-clip1-20261011")]:
     print("ROOT", str(root), root.exists(), flush=True)
     for path in sorted(root.glob("*/*/metrics.jsonl")):
         latest = None
