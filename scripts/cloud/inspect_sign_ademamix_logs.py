@@ -27,3 +27,10 @@ for root in [Path("/home/jovyan/dimativator/sign-ademamix-20261007"), Path("/hom
                 stream.seek(max(0, log.stat().st_size - 4000))
                 tail = stream.read().decode("utf-8", errors="replace")
             print("SIGN_LOG_TAIL " + json.dumps({"path": str(log), "tail": tail}), flush=True)
+
+    for log in sorted(root.glob("*/*/rank0.log")):
+        if not (log.parent / "metrics.jsonl").exists():
+            with log.open("rb") as stream:
+                stream.seek(max(0, log.stat().st_size - 8000))
+                tail = stream.read().decode("utf-8", errors="replace")
+            print("SIGN_STARTUP_LOG " + json.dumps({"path": str(log), "tail": tail}), flush=True)
