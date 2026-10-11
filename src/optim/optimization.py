@@ -178,23 +178,9 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             adamw_lr_scale=args.muon_adamw_lr_scale,
             dampening=args.dampening
         )
-    elif optimizer_name == "normuon":
-        for group in param_groups:
-            if not group.get("is_proj_params", False):
-                group["algorithm"] = "adamw"
-        optimizer = dion.NorMuon(
-            param_groups,
-            distributed_mesh=model.process_group,
-            lr=args.lr,
-            mu=args.momentum,
-            muon_beta2=args.muon_beta2,
-            betas=(args.beta1, args.beta2),
-            weight_decay=args.weight_decay,
-            epsilon=args.eps,
-            nesterov=args.nesterov,
-            adjust_lr=args.muon_adjust_lr,
-            use_adamuon=False,
-        )
+    elif optimizer_name in ("muon2", "normuon"):
+        from .adaptive_muon import build_adaptive_muon
+        optimizer = build_adaptive_muon(param_groups, args)
     elif optimizer_name == "adamuon":
         for group in param_groups:
             if not group.get("is_proj_params", False):
