@@ -39,12 +39,12 @@ def final_metric(path: Path, target: int) -> dict:
     if not finals:
         raise RuntimeError(f'No final validation at {target}: {path}')
     result = finals[-1]
-    loss = result.get('val/loss')
+    loss = result.get('final-val/loss', result.get('val/loss'))
     if not isinstance(loss, (int, float)) or not math.isfinite(loss):
         raise RuntimeError(f'Nonfinite final loss: {result}')
     if result['consumed_tokens'] != target * 128 * 1024:
         raise RuntimeError(f'Token budget mismatch: {result}')
-    return result
+    return {**result, 'val_loss': loss}
 
 
 def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None) -> None:
@@ -138,7 +138,7 @@ def best_lr(opt: str) -> str:
         if record.get('iter') != 39250:
             raise RuntimeError('Sweep not complete')
         finals.append(record)
-    return min(finals, key=lambda r: r['val/loss'])['lr']
+    return min(finals, key=lambda r: r['val_loss'])['lr']
 
 
 def main() -> None:
