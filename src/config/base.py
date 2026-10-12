@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "lion_muon_probability",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
@@ -177,6 +177,9 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--softmuon-sign-fraction", default=0.9, type=float)
     parser.add_argument("--softmuon-eps", default=1e-4, type=float)
     parser.add_argument("--softmuon-newton-iters", default=10, type=int)
+    parser.add_argument("--lion-muon-probability-schedule", default="constant",
+                        choices=["constant", "linear_up", "linear_down", "decay_up", "decay_down", "periodic"])
+    parser.add_argument("--lion-muon-probability-seed", default=20261012, type=int)
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging

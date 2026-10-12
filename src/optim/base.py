@@ -746,6 +746,7 @@ def train(
 
             peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9 if "cuda" in cfg.device else 0.0
             reserved_mem_gb = torch.cuda.memory_reserved() / 1e9 if "cuda" in cfg.device else 0.0
+            optimizer_metrics = opt.get_step_metrics() if hasattr(opt, "get_step_metrics") else {}
 
             print(
                 f"Train: Iter={curr_iter} "
@@ -759,6 +760,7 @@ def train(
                 cfg,
                 {
                     "event": "train",
+                    **optimizer_metrics,
                     "iter": curr_iter,
                     "train/loss": train_loss,
                     "train/perplexity": 2.71828**train_loss,
@@ -778,6 +780,7 @@ def train(
                     {
                         "iter": curr_iter,
                         "train/loss": train_loss,
+                        **optimizer_metrics,
                         "train/perplexity": 2.71828**train_loss,
                         "lr": current_lrs[0],
                         "iter_dt": dt,

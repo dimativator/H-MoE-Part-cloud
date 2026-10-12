@@ -440,6 +440,27 @@ def main(args):
             quantile=args.solo_quantile,
             block_size=args.solo_block_sizes[0],
         )
+    elif args.opt == "lion_muon_probability":
+        from optim.lion_muon_probability import ProbabilityLionMuon
+        if args.fp8_optim:
+            raise ValueError("LionMuon probability campaign uses native FP32 states")
+        matrices, auxiliary = [], []
+        for name, p in distributed_backend.get_raw_model(model).named_parameters():
+            for translated in distributed_backend.translate_model_parameter_name_for_node(name):
+                param = param_name_mapping[translated]
+                if param.ndim == 2 and not any(k in name for k in ("wte", "lm_head", "embed")):
+                    matrices.append(param)
+                else:
+                    auxiliary.append(param)
+        opt = ProbabilityLionMuon(
+            matrices, lr=args.lr, lion_lr=args.lr * 0.01, beta1=0.95, beta2=0.99,
+            ns_steps=6, muon_every_k=5, weight_decay=args.weight_decay,
+            adamw_params=auxiliary, adamw_lr=args.lr, adamw_betas=(args.beta1, args.beta2),
+            adamw_eps=args.eps, adamw_wd=args.weight_decay,
+            probability_schedule=args.lion_muon_probability_schedule,
+            total_steps=args.iterations, probability_seed=args.lion_muon_probability_seed,
+        )
+        print(f"LION_MUON_CONFIG schedule={args.lion_muon_probability_schedule} muon_lr={args.lr} lion_lr={args.lr*0.01} seed={args.lion_muon_probability_seed} states=FP32", flush=True)
     elif args.opt == "softmuon":
         from third_party.softsign.softmuon import SingleDeviceSoftMuonWithAuxAdam
         if args.fp8_optim:
