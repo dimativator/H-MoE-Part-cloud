@@ -9,6 +9,10 @@ import sys
 import time
 
 ROOT = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs3/dimativator/adaptive-muon-20261011'))
+SOURCE_ROOT = ROOT
+RECOVERY = os.environ.get('RECOVERY_RESULTS_DIR')
+if RECOVERY:
+    ROOT = Path(RECOVERY)
 DATA = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
 LRS = ('1e-4', '5e-4', '1e-3', '2e-3')
 OPTS = ('muon2', 'normuon')
@@ -50,6 +54,9 @@ def final_metric(path: Path, target: int) -> dict:
 def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None) -> None:
     group = f'adaptive_muon_{size}M_{phase}_20261011'
     name = f'{opt}_{size}m_bf16_lr{lr}_wd1e-1_{phase}_2gpu'
+    if RECOVERY:
+        name += '_storage_retry1'
+    decay_resume = resume is not None and phase == '1xC_decay'
     run_dir = ROOT / group / name
     metrics = run_dir / 'metrics.jsonl'
     done = ROOT / 'finals' / f'{name}.json'
@@ -88,8 +95,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--muon_beta2', '0.95', '--muon_ns_steps', '5', '--muon2-ns-steps', '5',
             '--beta1', '0.9', '--beta2', '0.95', '--eps', '1e-8', '--grad-clip', '1',
             '--batch-size', '16', '--acc-steps', '8', '--eval-batch-size', '32',
-            '--iterations', str(target), '--scheduler', 'wsd', '--warmup-steps', '0' if resume else '2000',
-            '--wsd-fract-decay', '1.0' if resume else '0.1', '--wsd-final-lr-scale', '0', '--decay-type', 'cosine',
+            '--iterations', str(target), '--scheduler', 'wsd', '--warmup-steps', '0' if decay_resume else '2000',
+            '--wsd-fract-decay', '1.0' if decay_resume else '0.1', '--wsd-final-lr-scale', '0', '--decay-type', 'cosine',
             '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0',
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
             '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', group,
@@ -98,7 +105,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         args += ['--early-stop-iteration', '2', '--eval-interval', '2', '--eval-batches', '1', '--log-interval', '1', '--no-local-save']
     else:
         args += ['--eval-interval', '500', '--eval-batches', '32', '--log-interval', '50']
-        if phase == '2xC':
+        if phase == '2xC' and resume is None:
             args += ['--inter-ckpts', '67911']
         else:
             args += ['--no-local-save']
@@ -106,7 +113,9 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             for filename in ('main.pt', 'worker_0.pt', 'worker_1.pt'):
                 if not (resume / filename).is_file():
                     raise RuntimeError(f'Missing checkpoint file: {resume / filename}')
-            args += ['--resume-from', str(resume), '--decay-from-checkpoint']
+            args += ['--resume-from', str(resume)]
+            if decay_resume:
+                args += ['--decay-from-checkpoint']
     log = ROOT / 'logs' / f'{name}_rank{RANK}.log'
     log.parent.mkdir(parents=True, exist_ok=True)
     print(f'RUN_START optimizer={opt} lr={lr} size={size} phase={phase} rank={RANK} log={log}', flush=True)
@@ -133,7 +142,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
 def best_lr(opt: str) -> str:
     finals = []
     for lr in LRS:
-        path = ROOT / 'finals' / f'{opt}_257m_bf16_lr{lr}_wd1e-1_1xC_2gpu.json'
+        path = SOURCE_ROOT / 'finals' / f'{opt}_257m_bf16_lr{lr}_wd1e-1_1xC_2gpu.json'
         record = wait_json(path, timeout=1)
         if record.get('iter') != 39250:
             raise RuntimeError('Sweep not complete')
@@ -169,8 +178,12 @@ def main() -> None:
         lr = winners[opt]
         if RANK == 0:
             atomic_json(ROOT / f'best_lr_{opt}.json', {'optimizer': opt, 'lr': lr})
-        train(opt, lr, 500, '2xC', 150914)
-        source = ROOT / 'adaptive_muon_500M_2xC_20261011' / f'{opt}_500m_bf16_lr{lr}_wd1e-1_2xC_2gpu' / 'ckpts' / '67911'
+        source = SOURCE_ROOT / 'adaptive_muon_500M_2xC_20261011' / f'{opt}_500m_bf16_lr{lr}_wd1e-1_2xC_2gpu' / 'ckpts' / '67911'
+        if RECOVERY:
+            import shutil
+            if shutil.disk_usage(ROOT).free < 2 * 10**9:
+                raise RuntimeError('Recovery output filesystem needs at least2GB free')
+        train(opt, lr, 500, '2xC', 150914, resume=source if RECOVERY else None)
         train(opt, lr, 500, '1xC_decay', 75457, resume=source)
     else:
         raise ValueError(MODE)
