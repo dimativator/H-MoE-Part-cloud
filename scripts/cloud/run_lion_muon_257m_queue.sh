@@ -2,7 +2,17 @@
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODE=${MODE:-smoke}
-case "$MODE" in smoke|full) ;; *) exit 2 ;; esac
+case "$MODE" in
+    smoke|full) ;;
+    campaign)
+        # The same MPI allocation runs tests first, then all six full runs.
+        # set -e prevents training from starting if any smoke command fails.
+        MODE=smoke bash "$0"
+        MODE=full bash "$0"
+        exit 0
+        ;;
+    *) exit 2 ;;
+esac
 RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/lionmuon-probability-257m-20261012}
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
 GROUP=lionmuon_probability_257m_1xC_20261012
