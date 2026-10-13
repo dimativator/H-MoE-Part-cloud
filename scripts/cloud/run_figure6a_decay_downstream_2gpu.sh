@@ -46,7 +46,7 @@ DECAY_FRACTION=$(python -c 'print(repr(7546.5 / 75457))')
     --batch-size 16 --acc-steps 8 --eval-batch-size 32 \
     --resume-from "$SOURCE_CKPT" --results-base-folder "$RESULTS_DIR" --wandb-group "$GROUP" --experiment-name "$NAME" \
     --eval-interval 500 --eval-batches 32 --log-interval 50 --inter-ckpts 75457 --latest-ckpt-interval 0 \
-    --downstream-eval-enabled --downstream-eval-interval 75457 --downstream-task-group basic_v2 \
+    --downstream-eval-enabled --downstream-eval-interval 2000 --downstream-task-group basic_v2 \
     --wandb --wandb-project fp8-pretrain --metrics-jsonl "$RESULTS_DIR/$GROUP/$NAME/metrics.jsonl"
 if (( RANK_ID == 0 )); then
     python scripts/cloud/audit_figure6a_checkpoint.py "$RESULTS_DIR/$GROUP/$NAME/ckpts/75457" --iteration 75457
