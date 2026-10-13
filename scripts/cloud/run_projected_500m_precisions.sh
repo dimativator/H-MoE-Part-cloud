@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -euo pipefail
+OPTIMIZER=${OPTIMIZER:?Set OPTIMIZER to apollo or galore}
+case "${OPTIMIZER}" in
+    apollo) OPT=apollo_adamw; LR=2e-3; OPT_ARGS=(--apollo_proj random --apollo_scale_type channel --apollo_scale 1 --proj_side std) ;;
+    galore) OPT=galore_adamw; LR=1e-3; OPT_ARGS=(--proj_type svd --proj_side std) ;;
+    *) exit 2 ;;
+esac
+export GPU_COUNT=2
+
+PRECISION=${PRECISION:?Set PRECISION to bf16, fp8_act, fp8_full, or w16a16g32_fp8_states}
+case "${PRECISION}" in
+    bf16|fp8_act|fp8_full|w16a16g32_fp8_states) ;;
+    *) echo "Unsupported PRECISION=${PRECISION}" >&2; exit 2 ;;
+esac
+MODE=${MODE:-full}
+case "${MODE}" in smoke|full|decay_only|verify_only|relay_only) ;; *) echo "Unsupported MODE=${MODE}" >&2; exit 2 ;; esac
+
+NPROC_PER_NODE=${GPU_COUNT:-4}
+case "${NPROC_PER_NODE}" in 2|4) ;; *) echo "GPU_COUNT must be 2 or 4" >&2; exit 2 ;; esac
+if (( NPROC_PER_NODE == 2 )); then
+    BATCH_SIZE=16
+    ACC_STEPS=8
+else
+    BATCH_SIZE=8
+    ACC_STEPS=16
+fi
+DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
+RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/projected-500m-precisions-20261013}
+EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
+TRUNK_GROUP=2xChinchilla_500M_projected_wd1e-2_precisions_20261013
+DECAY_GROUP=1xChinchilla_decay_500M_projected_wd1e-2_precisions_20261013
+TRUNK_NAME=llama500M_${OPTIMIZER}_${PRECISION}_wd1e-2_2xC_warmup2000_${NPROC_PER_NODE}gpu_20261013
+DECAY_NAME=llama500M_${OPTIMIZER}_${PRECISION}_wd1e-2_1xC_decay_warmup2000_${NPROC_PER_NODE}gpu_20261013
+TRUNK_DIR=${RESULTS_DIR}/${TRUNK_GROUP}/${TRUNK_NAME}
+DECAY_DIR=${RESULTS_DIR}/${DECAY_GROUP}/${DECAY_NAME}
+SOURCE_CKPT=${TRUNK_DIR}/ckpts/67911
+REMOTE_NAME=${TRUNK_NAME}-iter-67911
+MPI_SIZE=${OMPI_COMM_WORLD_SIZE:-1}
+MPI_RANK=${OMPI_COMM_WORLD_RANK:-0}
+MPI_LOCAL_RANK=${OMPI_COMM_WORLD_LOCAL_RANK:-0}
+if (( MPI_SIZE > 1 && MPI_SIZE != NPROC_PER_NODE )); then
+    echo "Expected ${NPROC_PER_NODE} MPI ranks, got ${MPI_SIZE}" >&2; exit 2
+fi
+
+mkdir -p "${RESULTS_DIR}/logs" "${RESULTS_DIR}/wandb" "${EVAL_CACHE_DIR}"
+exec > >(tee -a "${RESULTS_DIR}/logs/${TRUNK_NAME}_${MODE}_rank${MPI_RANK}.log") 2>&1
+echo "RUN_START=$(date --iso-8601=seconds) MODE=${MODE} PRECISION=${PRECISION} WARMUP_STEPS=2000 RANK=${MPI_RANK}/${MPI_SIZE}"
+df -h "${RESULTS_DIR}" /home/jovyan /workspace-SR006.nfs3
+
+PYTHON_BIN=$(command -v python)
+if [[ "${MODE}" != relay_only && "${MODE}" != verify_only ]]; then
+DATASETS_DIR="${DATASETS_DIR}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from pathlib import Path
+import torch
+metadata = json.loads((Path(os.environ['DATASETS_DIR']) / 'packed_metadata.json').read_text())
+assert metadata['format'] == 'packed_fineweb_h200_v3'
+assert int(metadata['iterations']) >= 150914
+assert int(metadata['world_size']) == 2
+assert int(metadata['batch_size']) == 16
+assert torch.__version__.startswith('2.9.1')
+assert torch.cuda.is_available()
+print('ENVIRONMENT_AND_DATA_CHECK=ok', flush=True)
+PY
+fi
+
+if [[ "${MODE}" == relay_only ]]; then
+    [[ -n "${BRAIN_LAB_RELAY_KEY_B64:-}${BRAIN_LAB_RELAY_KEY_B64_0:-}" ]] || { echo 'Missing relay credential' >&2; exit 3; }
+fi
+if [[ "${MODE}" == full ]]; then
+    available_bytes=$(df -B1 --output=avail "${RESULTS_DIR}" | tail -n 1 | tr -d ' ')
+    (( available_bytes >= 6500000000 )) || { echo "Insufficient checkpoint space: ${available_bytes}" >&2; exit 4; }
+fi
+
+if (( MPI_SIZE > 1 )); then
+    export RANK=${RANK:-${MPI_RANK}} WORLD_SIZE=${WORLD_SIZE:-${MPI_SIZE}} LOCAL_RANK=${LOCAL_RANK:-${MPI_LOCAL_RANK}}
+    export MASTER_ADDR=${MASTER_ADDR:-$(hostname -f)} MASTER_PORT=${MASTER_PORT:-29500}
+    TRAIN_LAUNCHER=("${PYTHON_BIN}")
+else
+    TRAIN_LAUNCHER=("$(command -v torchrun)" --standalone --nproc_per_node="${NPROC_PER_NODE}")
+fi
+export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false PYTORCH_ALLOC_CONF=expandable_segments:True
+export FINEWEB_LOG_DATA_HASHES=1
+export BRAIN_LAB_CHECKPOINT_WORKERS="${NPROC_PER_NODE}"
+export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_MODE=offline WANDB_DIR="${RESULTS_DIR}/wandb"
+export TRITON_CACHE_DIR="/tmp/triton-500m-slimadam-${PRECISION}-${MODE}-rank${MPI_RANK}-$$"
+mkdir -p "${TRITON_CACHE_DIR}"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+check_final_validation() {
+    local metrics_path=$1 expected_iter=$2
+    METRICS_PATH="${metrics_path}" EXPECTED_ITER="${expected_iter}" "${PYTHON_BIN}" - <<'PY'
+import json
+import math
+import os
+from pathlib import Path
+
+path = Path(os.environ["METRICS_PATH"])
+expected = int(os.environ["EXPECTED_ITER"])
+found = None
+with path.open() as stream:
+    for line in stream:
+        item = json.loads(line)
+        if item.get("event") == "validation" and item.get("iter") == expected:
+            found = item.get("final-val/loss", item.get("val/loss"))
+if found is None or not math.isfinite(float(found)):
+    raise RuntimeError(f"Missing exact final validation at iter {expected}: {path}")
+print(f"FINAL_VAL_LOSS_EXACT iter={expected} value={found}", flush=True)
+PY
+}
+
+verify_saved_completion() {
+    local metrics_path=$1 expected_iter=$2
+    check_final_validation "${metrics_path}" "${expected_iter}"
+    METRICS_PATH="${metrics_path}" EXPECTED_ITER="${expected_iter}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+expected = int(os.environ["EXPECTED_ITER"])
+events = set()
+with Path(os.environ["METRICS_PATH"]).open() as stream:
+    for line in stream:
+        item = json.loads(line)
+        if item.get("iter") == expected:
+            events.add(item.get("event"))
+if not {"validation", "downstream", "lm_eval"}.issubset(events):
+    raise RuntimeError(f"Missing final evaluation events at iter {expected}: {events}")
+print(f"SAVED_COMPLETION_VERIFIED iter={expected}", flush=True)
+PY
+}
+
+relay_and_remove_local_checkpoint() {
+    local required rank
+    local required_files=(main.pt)
+    for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
+    [[ -d "${SOURCE_CKPT}" ]] || { echo "Missing checkpoint: ${SOURCE_CKPT}" >&2; return 8; }
+    for required in "${required_files[@]}"; do
+        [[ -s "${SOURCE_CKPT}/${required}" ]] || { echo "Incomplete checkpoint file: ${required}" >&2; return 8; }
+    done
+    check_final_validation "${DECAY_DIR}/metrics.jsonl" 75457
+    "${PYTHON_BIN}" scripts/cloud/relay_brain_lab_checkpoint.py upload "${SOURCE_CKPT}" "${REMOTE_NAME}"
+    for required in "${required_files[@]}"; do
+        rm -- "${SOURCE_CKPT}/${required}"
+    done
+    rmdir -- "${SOURCE_CKPT}"
+    echo "LOCAL_PRE_DECAY_CHECKPOINT_REMOVED=${SOURCE_CKPT}"
+}
+
+if [[ "${MODE}" == verify_only || "${MODE}" == relay_only ]]; then
+    (( MPI_SIZE == 1 )) || { echo 'Verification and relay require one CPU rank' >&2; exit 2; }
+    verify_saved_completion "${DECAY_DIR}/metrics.jsonl" 75457
+    echo "SLIMADAM_1XC_DECAY_COMPLETION_AUDITED precision=${PRECISION} iter=75457"
+    if [[ "${MODE}" == verify_only ]]; then exit 0; fi
+    verify_saved_completion "${TRUNK_DIR}/metrics.jsonl" 150914
+    echo "SLIMADAM_2XC_COMPLETION_AUDITED precision=${PRECISION} iter=150914"
+    relay_and_remove_local_checkpoint
+    exit 0
+fi
+
+PRECISION_ARGS=()
+case "${PRECISION}" in
+    fp8_act|fp8_full)
+        PRECISION_ARGS+=(--fp8 --fp8-fabit E4M3 --fp8-fwbit E4M3 --fp8-babit E5M2 --fp8-bwbit E5M2 --fp8-group-size 16)
+        ;;
+esac
+case "${PRECISION}" in
+    fp8_full|w16a16g32_fp8_states)
+        PRECISION_ARGS+=(--fp8-optim --fp8-qgroup-size 128 --fp8-first-order-bit E4M3 --fp8-second-order-bit E4M3 --fp8-expansion expand)
+        ;;
+esac
+
+COMMON_ARGS=(
+    --distributed-backend nccl --seed 0 --data-seed 1337
+    --dataset fineweb --datasets-dir "${DATASETS_DIR}"
+    --fineweb-replay-world-size 1 --fineweb-replay-layout concat
+    --eval-cache-dir "${EVAL_CACHE_DIR}" --sequence-length 1024 --streaming --workers 8
+    --model llama --n-layer 18 --n-embd 1280 --n-head 20 --multiple-of 256
+    --dtype bfloat16 --opt "${OPT}" --lr "${LR}" --weight-decay 1e-2
+    --beta1 0.9 --beta2 0.999 --grad-clip 1.0
+    --density 0.25 --update_gap 50 --coord_choice columns --inactive_update_rule sign_sgd
+    "${OPT_ARGS[@]}"
+    --batch-size "${BATCH_SIZE}" --acc-steps "${ACC_STEPS}" --eval-batch-size 32
+    --results-base-folder "${RESULTS_DIR}" "${PRECISION_ARGS[@]}"
+)
+
+if [[ "${MODE}" == smoke ]]; then
+    "${TRAIN_LAUNCHER[@]}" src/main.py "${COMMON_ARGS[@]}" \
+        --experiment-name "smoke_${TRUNK_NAME}" \
+        --scheduler none --warmup-steps 0 --iterations 2 \
+        --eval-interval 2 --eval-batches 1 --log-interval 1 --no-local-save
+    if (( MPI_RANK == 0 )); then echo "SLIMADAM_PRECISION_SMOKE_COMPLETE precision=${PRECISION}"; fi
+    exit 0
+fi
+
+if [[ "${MODE}" == full ]]; then
+    if [[ -e "${TRUNK_DIR}/metrics.jsonl" || -e "${DECAY_DIR}/metrics.jsonl" ]]; then
+        echo "Refusing to overwrite an existing run: ${TRUNK_DIR}" >&2; exit 5
+    fi
+    "${TRAIN_LAUNCHER[@]}" src/main.py "${COMMON_ARGS[@]}" \
+    --experiment-name "${TRUNK_NAME}" \
+    --scheduler wsd --warmup-steps 2000 --iterations 150914 \
+    --wsd-fract-decay 0.1 --wsd-final-lr-scale 0 --decay-type cosine \
+    --eval-interval 500 --eval-batches 32 --log-interval 50 \
+    --downstream-eval-enabled --downstream-eval-interval 2000 --downstream-task-group basic_v2 \
+    --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
+    --inter-ckpts 67911 --latest-ckpt-interval 0 \
+    --wandb --wandb-project fp8-pretrain --wandb-group "${TRUNK_GROUP}" \
+    --wandb-tags fineweb 2xChinchilla 500M slim_adam wd1e-4 warmup2000 "${PRECISION}" \
+    --metrics-jsonl "${TRUNK_DIR}/metrics.jsonl"
+    if (( MPI_RANK == 0 )); then
+        check_final_validation "${TRUNK_DIR}/metrics.jsonl" 150914
+        echo "SLIMADAM_2XC_COMPLETE precision=${PRECISION} iter=150914"
+    fi
+else
+    [[ ! -e "${DECAY_DIR}/metrics.jsonl" ]] || { echo 'Decay run already exists' >&2; exit 5; }
+    SOURCE_CKPT="${SOURCE_CKPT}" CHECKPOINT_WORKERS="${NPROC_PER_NODE}" CHECKPOINT_ACC_STEPS="${ACC_STEPS}" \
+        bash scripts/cloud/audit_slimadam_precision_decay_source.sh
+fi
+required_files=(main.pt)
+for (( rank=0; rank<NPROC_PER_NODE; rank++ )); do required_files+=("worker_${rank}.pt"); done
+for required in "${required_files[@]}"; do
+    [[ -s "${SOURCE_CKPT}/${required}" ]] || { echo "Incomplete checkpoint file: ${required}" >&2; exit 8; }
+done
+
+"${TRAIN_LAUNCHER[@]}" src/main.py "${COMMON_ARGS[@]}" \
+    --experiment-name "${DECAY_NAME}" --resume-from "${SOURCE_CKPT}" --decay-from-checkpoint \
+    --scheduler wsd --warmup-steps 0 --iterations 75457 \
+    --wsd-fract-decay 1.0 --wsd-final-lr-scale 0 --decay-type cosine \
+    --eval-interval 500 --eval-batches 32 --log-interval 50 \
+    --downstream-eval-enabled --downstream-eval-interval 2000 --downstream-task-group basic_v2 \
+    --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
+    --latest-ckpt-interval 0 --no-local-save \
+    --wandb --wandb-project fp8-pretrain --wandb-group "${DECAY_GROUP}" \
+    --wandb-tags fineweb 1xChinchilla decay 500M slim_adam wd1e-4 warmup2000 "${PRECISION}" \
+    --metrics-jsonl "${DECAY_DIR}/metrics.jsonl"
+
+if (( MPI_RANK == 0 )); then
+    check_final_validation "${DECAY_DIR}/metrics.jsonl" 75457
+    echo "SLIMADAM_1XC_DECAY_COMPLETE precision=${PRECISION} iter=75457"
+fi
