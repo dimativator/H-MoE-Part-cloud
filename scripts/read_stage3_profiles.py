@@ -44,8 +44,9 @@ def trace_summary(path: Path) -> dict:
         phase = "unmapped"
         owner = ""
         if parent is not None:
-            matches = [r for r in ranges if r.get("tid") == parent.get("tid")
-                       and r["ts"] <= parent["ts"] < r["ts"] + r["dur"]]
+            matches = [r for r in ranges if r["ts"] <= parent["ts"] < r["ts"] + r["dur"]
+                       and (not r["name"].startswith("stage3::module[")
+                            or r.get("tid") == parent.get("tid"))]
             if any(r["name"] == "stage3::optimizer_step" for r in matches):
                 phase = "optimizer"
             elif any(r["name"] == "stage3::forward_backward" for r in matches):
@@ -89,7 +90,21 @@ def main() -> None:
         traces = sorted(directory.glob("chunk-*.json.gz"))
         if len(summaries) != 10 or len(traces) != 10:
             raise RuntimeError(f"Incomplete profiles: {directory}")
-        emit("summaries", directory.name, [json.loads(p.read_text()) for p in summaries])
+        compact = []
+        for path in summaries:
+            payload = json.loads(path.read_text())
+            groups = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0.0])
+            for row in payload["rows"]:
+                key = (row["name"], row["cpu_us"] > 0 or row["self_cpu_us"] > 0)
+                value = groups[key]
+                for index, field in enumerate(("count", "self_cpu_us", "cpu_us", "self_device_us", "device_us")):
+                    value[index] += row[field]
+            payload["rows"] = [dict(name=key[0], cpu_event=key[1], count=value[0],
+                                    self_cpu_us=value[1], cpu_us=value[2],
+                                    self_device_us=value[3], device_us=value[4])
+                               for key, value in groups.items()]
+            compact.append(payload)
+        emit("compact_summaries", directory.name, compact)
         for path in traces[:args.trace_chunks]:
             print(f"STAGE3_READING {directory.name} {path.name}", flush=True)
             emit("trace", directory.name + "/" + path.name, trace_summary(path))
