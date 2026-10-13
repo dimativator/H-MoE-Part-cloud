@@ -8,9 +8,9 @@ case "${OPTIMIZER}" in
 esac
 export GPU_COUNT=2
 
-PRECISION=${PRECISION:?Set PRECISION to bf16, fp8_act, fp8_full, or w16a16g32_fp8_states}
+PRECISION=${PRECISION:?Set PRECISION to bf16, fp8_mixed, fp8_full, or w16a16g32_fp32_states}
 case "${PRECISION}" in
-    bf16|fp8_act|fp8_full|w16a16g32_fp8_states) ;;
+    bf16|fp8_mixed|fp8_full|w16a16g32_fp32_states) ;;
     *) echo "Unsupported PRECISION=${PRECISION}" >&2; exit 2 ;;
 esac
 MODE=${MODE:-full}
@@ -26,7 +26,7 @@ else
     ACC_STEPS=16
 fi
 DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-packed}
-RESULTS_DIR=${RESULTS_DIR:-/workspace-SR006.nfs3/dimativator/projected-500m-precisions-20261013}
+RESULTS_DIR=${RESULTS_DIR:-/home/jovyan/dimativator/projected-500m-precisions-20261013}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-/home/jovyan/evals_cache}
 TRUNK_GROUP=2xChinchilla_500M_projected_wd1e-2_precisions_20261013
 DECAY_GROUP=1xChinchilla_decay_500M_projected_wd1e-2_precisions_20261013
@@ -84,6 +84,7 @@ fi
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false PYTORCH_ALLOC_CONF=expandable_segments:True
 export FINEWEB_LOG_DATA_HASHES=1
 export BRAIN_LAB_CHECKPOINT_WORKERS="${NPROC_PER_NODE}"
+export BRAIN_LAB_CHECKPOINT_ROOT=/home/dimativator/checkpoints/projected-500m-precisions-20261013
 export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_MODE=offline WANDB_DIR="${RESULTS_DIR}/wandb"
 export TRITON_CACHE_DIR="/tmp/triton-500m-slimadam-${PRECISION}-${MODE}-rank${MPI_RANK}-$$"
 mkdir -p "${TRITON_CACHE_DIR}"
@@ -142,11 +143,7 @@ relay_and_remove_local_checkpoint() {
     done
     check_final_validation "${DECAY_DIR}/metrics.jsonl" 75457
     "${PYTHON_BIN}" scripts/cloud/relay_brain_lab_checkpoint.py upload "${SOURCE_CKPT}" "${REMOTE_NAME}"
-    for required in "${required_files[@]}"; do
-        rm -- "${SOURCE_CKPT}/${required}"
-    done
-    rmdir -- "${SOURCE_CKPT}"
-    echo "LOCAL_PRE_DECAY_CHECKPOINT_REMOVED=${SOURCE_CKPT}"
+    echo "CLOUD_SOURCE_RETAINED_PENDING_PINNED_HF_VERIFICATION=${SOURCE_CKPT}"
 }
 
 if [[ "${MODE}" == verify_only || "${MODE}" == relay_only ]]; then
@@ -162,12 +159,12 @@ fi
 
 PRECISION_ARGS=()
 case "${PRECISION}" in
-    fp8_act|fp8_full)
+    fp8_mixed|fp8_full)
         PRECISION_ARGS+=(--fp8 --fp8-fabit E4M3 --fp8-fwbit E4M3 --fp8-babit E5M2 --fp8-bwbit E5M2 --fp8-group-size 16)
         ;;
 esac
 case "${PRECISION}" in
-    fp8_full|w16a16g32_fp8_states)
+    fp8_full)
         PRECISION_ARGS+=(--fp8-optim --fp8-qgroup-size 128 --fp8-first-order-bit E4M3 --fp8-second-order-bit E4M3 --fp8-expansion expand)
         ;;
 esac
@@ -208,7 +205,7 @@ if [[ "${MODE}" == full ]]; then
     --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
     --inter-ckpts 67911 --latest-ckpt-interval 0 \
     --wandb --wandb-project fp8-pretrain --wandb-group "${TRUNK_GROUP}" \
-    --wandb-tags fineweb 2xChinchilla 500M slim_adam wd1e-4 warmup2000 "${PRECISION}" \
+    --wandb-tags fineweb 2xChinchilla 500M "${OPTIMIZER}" wd1e-2 warmup2000 "${PRECISION}" \
     --metrics-jsonl "${TRUNK_DIR}/metrics.jsonl"
     if (( MPI_RANK == 0 )); then
         check_final_validation "${TRUNK_DIR}/metrics.jsonl" 150914
@@ -234,7 +231,7 @@ done
     --lm-eval-enabled --lm-eval-interval 2000 --lm-eval-datasets wikitext103 \
     --latest-ckpt-interval 0 --no-local-save \
     --wandb --wandb-project fp8-pretrain --wandb-group "${DECAY_GROUP}" \
-    --wandb-tags fineweb 1xChinchilla decay 500M slim_adam wd1e-4 warmup2000 "${PRECISION}" \
+    --wandb-tags fineweb 1xChinchilla decay 500M "${OPTIMIZER}" wd1e-2 warmup2000 "${PRECISION}" \
     --metrics-jsonl "${DECAY_DIR}/metrics.jsonl"
 
 if (( MPI_RANK == 0 )); then

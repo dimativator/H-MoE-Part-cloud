@@ -3,6 +3,7 @@ from .memory_efficient.frugal import AdamW, GaloreAdamW, CoordAdamW, BlockAdamW,
 from .memory_efficient.fira import FiraAdamW
 from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
+from .memory_efficient.fp8_projected_adam import FP8APOLLOAdamW, FP8GaloreAdamW
 from .memory_efficient.ldadam import LDAdamW
 from .memory_efficient.coap import COAPAdamW
 from .memory_efficient.cosmos import COSMOS
@@ -333,7 +334,13 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
                 group["scale_type"] = args.apollo_scale_type
 
                 group["proj_type"] = args.proj_side
-        optimizer = APOLLOAdamW(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, scale_front=args.apollo_scale_front)
+        optimizer_cls = FP8APOLLOAdamW if getattr(args, "fp8_optim", False) else APOLLOAdamW
+        optimizer_kwargs = dict(betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, scale_front=args.apollo_scale_front)
+        if optimizer_cls is FP8APOLLOAdamW:
+            if qargs is None:
+                raise ValueError("FP8APOLLOAdamW requires qargs from --fp8-optim.")
+            optimizer_kwargs["qargs"] = qargs
+        optimizer = optimizer_cls(param_groups, **optimizer_kwargs)
     elif optimizer_name in ("ldadam", "ldadamw"):
         for group in param_groups:
             if group.get("is_proj_params", False):
@@ -450,8 +457,9 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
 
     elif optimizer_name == "galore_adamw":
         # redefine way to call galore_adamw
-        optimizer = GaloreAdamW(
-            frugal_groups,
+        optimizer_cls = FP8GaloreAdamW if getattr(args, "fp8_optim", False) else GaloreAdamW
+        optimizer_kwargs = dict(
+            params=frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -463,7 +471,12 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             proj_type=args.proj_type,
             # adam specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)
-        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
+        if optimizer_cls is FP8GaloreAdamW:
+            if qargs is None:
+                raise ValueError("FP8GaloreAdamW requires qargs from --fp8-optim.")
+            optimizer_kwargs["qargs"] = qargs
+        optimizer = optimizer_cls(**optimizer_kwargs)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args, qargs=qargs)
     elif optimizer_name == "coord_adamw":
         optimizer = CoordAdamW(
             frugal_groups,

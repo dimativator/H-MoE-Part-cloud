@@ -19,7 +19,7 @@ HOST_KEY = (
     "[proxy2.cod.phystech.edu]:10210 ssh-ed25519 "
     "AAAAC3NzaC1lZDI1NTE5AAAAIIHHLCvWHzxMi+m7XnSqdhq3qWPOmGt+88zaEcWPDTui"
 )
-REMOTE_ROOT = "/home/dimativator/checkpoints/500m-slimadam-precisions-20261002"
+REMOTE_ROOT = os.environ.get("BRAIN_LAB_CHECKPOINT_ROOT", "/home/dimativator/checkpoints/500m-slimadam-precisions-20261002")
 
 
 def checkpoint_files():
@@ -47,6 +47,11 @@ def main():
     parser.add_argument("local_dir", type=Path)
     parser.add_argument("remote_name")
     args = parser.parse_args()
+    if REMOTE_ROOT not in (
+        "/home/dimativator/checkpoints/500m-slimadam-precisions-20261002",
+        "/home/dimativator/checkpoints/projected-500m-precisions-20261013",
+    ):
+        raise ValueError("Unsupported checkpoint root")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.remote_name):
         raise ValueError("Unsafe remote checkpoint name")
     secret = os.environ.get("BRAIN_LAB_RELAY_KEY_B64") or "".join(
@@ -64,7 +69,7 @@ def main():
         private_key.chmod(0o600)
         known_hosts.write_text(HOST_KEY + "\n")
         options = [
-            "-o", "ClearAllForwardings=yes", "-o", "BatchMode=yes",
+            "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes",
             "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", f"UserKnownHostsFile={known_hosts}", "-i", str(private_key),
         ]
