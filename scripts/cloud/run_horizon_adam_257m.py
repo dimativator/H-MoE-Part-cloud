@@ -144,6 +144,40 @@ def verify_metric(path: Path, step: int, final: bool = False) -> dict:
     return {**result, 'val_loss': loss}
 
 
+def validate_resume(checkpoint: Path, lr: str) -> dict:
+    """Reject partial writes and model/data checkpoints from different steps."""
+    import torch
+    for filename in ('main.pt', 'worker_0.pt'):
+        if not (checkpoint / filename).is_file():
+            raise RuntimeError(f'Missing recovery file: {checkpoint / filename}')
+    source = json.loads((checkpoint.parent.parent / 'campaign.json').read_text())
+    if source['science'] != SCIENCE or source['lr'] != lr:
+        raise RuntimeError('Recovery checkpoint scientific configuration differs from this run')
+    model = torch.load(checkpoint / 'main.pt', map_location='cpu', weights_only=False)
+    worker = torch.load(checkpoint / 'worker_0.pt', map_location='cpu', weights_only=False)
+    iteration = model['itr']
+    reader = worker['train_reader_state']
+    if not isinstance(iteration, int) or not 0 < iteration < TARGET:
+        raise RuntimeError(f'Invalid recovery iteration: {iteration}')
+    expected = dict(reader_type='fineweb_serial_replay_train_reader_v1', batch_size=16,
+                    sequence_length=1024, source_world_size=2, step=iteration * 8)
+    if any(reader.get(key) != value for key, value in expected.items()):
+        raise RuntimeError(f'Model/data checkpoint mismatch at iteration {iteration}: {reader}')
+    sources = reader.get('source_states', [])
+    if len(sources) != 2 or any(source.get('step') != iteration * 4 or source.get('rank') != rank
+                                for rank, source in enumerate(sources)):
+        raise RuntimeError('Recovery source-reader positions do not match the model checkpoint')
+    if model.get('scheduler') is None or not model.get('optimizer'):
+        raise RuntimeError('Recovery requires optimizer and scheduler state')
+    if any(state.get('codec_version') != 1 for state in model['optimizer']['state'].values() if state):
+        raise RuntimeError('Recovery requires HorizonAdam codec state')
+    if any(key not in worker for key in ('rng_python', 'rng_np', 'rng_torch_cpu', 'rng_torch_gpu')):
+        raise RuntimeError('Recovery requires complete RNG state')
+    report = dict(path=str(checkpoint), iteration=iteration, reader_microstep=reader['step'])
+    print('HORIZON_RECOVERY_VERIFIED_JSON=' + json.dumps(report), flush=True)
+    return report
+
+
 def train_args(name: str, lr: str, metrics: Path, smoke: bool, resume: Path | None) -> list[str]:
     args = ['src/main.py', '--distributed-backend', 'nccl', '--experiment-name', name,
             '--seed', '0', '--data-seed', '1337', '--dataset', 'fineweb', '--datasets-dir', str(DATA),
@@ -209,15 +243,10 @@ def campaign() -> None:
     name = f'horizon_adam_257m_b8_h32_lr{lr}_wd1e-1_s0_attempt{attempt}'
     run_dir = ROOT / GROUP / name
     resume = Path(os.environ['RESUME_FROM']).resolve() if os.environ.get('RESUME_FROM') else None
-    if (run_dir / 'done.json').exists() or (run_dir.exists() and resume is None):
-        raise RuntimeError(f'Refusing duplicate/overwrite: {run_dir}. Use a new ATTEMPT or explicit RESUME_FROM.')
+    if run_dir.exists():
+        raise RuntimeError(f'Refusing duplicate/overwrite: {run_dir}. Always use a new ATTEMPT, including recovery.')
     if resume is not None:
-        for filename in ('main.pt', 'worker_0.pt'):
-            if not (resume / filename).is_file():
-                raise RuntimeError(f'Missing recovery file: {resume / filename}')
-        source_manifest = json.loads((resume.parent.parent / 'campaign.json').read_text())
-        if source_manifest['science'] != SCIENCE or source_manifest['lr'] != lr:
-            raise RuntimeError('Recovery checkpoint scientific configuration differs from this run')
+        validate_resume(resume, lr)
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = dict(name=name, group=GROUP, lr=lr, attempt=attempt, science=SCIENCE,
                     resume_from=str(resume) if resume else None, timestamp=time.time())
