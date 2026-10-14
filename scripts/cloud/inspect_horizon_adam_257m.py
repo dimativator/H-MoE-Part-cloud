@@ -1,5 +1,8 @@
 """CPU-only snapshot of this HorizonAdam campaign, including loss histories."""
 from collections import deque
+import base64
+import gzip
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -88,9 +91,23 @@ def main() -> None:
     storage = storage_report(require_space=False) if ROOT.exists() else dict(path=str(ROOT), exists=False)
     snapshot = dict(timestamp=time.time(), group=GROUP, results_dir=str(ROOT), storage=storage,
                     data_path=str(DATA), data_metadata=metadata, runs=progress, errors=errors)
-    print('HORIZON_PROGRESS_JSON=' + json.dumps(snapshot, sort_keys=True, allow_nan=False), flush=True)
-    print('HORIZON_HISTORY_JSON=' + json.dumps(dict(group=GROUP, runs=histories),
-                                             sort_keys=True, allow_nan=False), flush=True)
+    # MPI logging inserts prefixes into long stdout lines and Cloud logs may
+    # return lines in reverse order. Indexed short chunks survive both cases.
+    archive = dict(progress=snapshot, history=dict(group=GROUP, runs=histories))
+    compressed = gzip.compress(json.dumps(archive, sort_keys=True, allow_nan=False).encode())
+    digest = hashlib.sha256(compressed).hexdigest()
+    encoded = base64.b64encode(compressed).decode()
+    chunks = [encoded[start:start + 900] for start in range(0, len(encoded), 900)]
+    snapshot_id = str(time.time_ns())
+    for part, data in enumerate(chunks):
+        print('HORIZON_SNAPSHOT_CHUNK=' + json.dumps(dict(snapshot_id=snapshot_id, part=part,
+              total=len(chunks), data=data, sha256=digest)), flush=True)
+    compact = dict(timestamp=snapshot['timestamp'], group=GROUP, results_dir=str(ROOT),
+                   storage=storage, errors=errors,
+                   runs=[{key: run[key] for key in ('name', 'lr', 'attempt', 'status',
+                         'completed_steps', 'target_steps', 'metric_age_seconds')}
+                         for run in progress])
+    print('HORIZON_PROGRESS_JSON=' + json.dumps(compact, sort_keys=True, allow_nan=False), flush=True)
 
 
 if __name__ == '__main__':
