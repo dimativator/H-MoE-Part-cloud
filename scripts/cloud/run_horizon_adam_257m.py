@@ -71,6 +71,18 @@ def storage_report(require_space: bool = True) -> dict:
     return result
 
 
+def storage_inventory() -> None:
+    locations = [Path('/home/jovyan'), Path('/tmp'), *sorted(Path('/').glob('workspace-*'))]
+    rows = []
+    for location in locations:
+        if not location.is_dir():
+            continue
+        disk = shutil.disk_usage(location)
+        rows.append(dict(path=str(location), total_bytes=disk.total,
+                         used_bytes=disk.used, free_bytes=disk.free))
+    print('HORIZON_STORAGE_JSON=' + json.dumps(rows), flush=True)
+
+
 def preflight() -> dict:
     report = dict(timestamp=time.time(), data=data_report(), storage=storage_report(),
                   group=GROUP, science=SCIENCE, lrs=LRS)
@@ -241,6 +253,8 @@ def main() -> None:
     mode = os.environ.get('MODE', 'preflight')
     if mode == 'preflight':
         preflight()
+    elif mode == 'storage':
+        storage_inventory()
     elif mode == 'campaign':
         campaign()
     elif mode == 'inspect':
