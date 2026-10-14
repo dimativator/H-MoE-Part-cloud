@@ -9,7 +9,7 @@ import sys
 import time
 
 ROOT = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs3/dimativator/adaptive-muon-20261011'))
-SOURCE_ROOT = ROOT
+SOURCE_ROOT = Path(os.environ.get('SWEEP_RESULTS_DIR', str(ROOT)))
 RECOVERY = os.environ.get('RECOVERY_RESULTS_DIR')
 if RECOVERY:
     ROOT = Path(RECOVERY)
@@ -19,6 +19,7 @@ OPTS = ('muon2', 'normuon')
 RANK = int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 WORLD = int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))
 MODE = os.environ.get('MODE', 'smoke')
+CAMPAIGN_DATE = os.environ.get('CAMPAIGN_DATE', '20261011')
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -51,9 +52,9 @@ def final_metric(path: Path, target: int) -> dict:
     return {**result, 'val_loss': loss}
 
 
-def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None) -> None:
-    group = f'adaptive_muon_{size}M_{phase}_20261011'
-    name = f'{opt}_{size}m_bf16_lr{lr}_wd1e-1_{phase}_2gpu'
+def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1') -> None:
+    group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
+    name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_2gpu'
     if RECOVERY:
         name += '_storage_retry1'
     decay_resume = resume is not None and phase == '1xC_decay'
@@ -73,7 +74,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     env.update(PYTHONUNBUFFERED='1', TOKENIZERS_PARALLELISM='false',
                PYTORCH_ALLOC_CONF='expandable_segments:True', WANDB_MODE=os.environ.get('WANDB_MODE', 'offline'),
                WANDB_BASE_URL='https://wandb-radfan.ru', WANDB_ENTITY='andrey',
-               WANDB_DIR=str(ROOT / 'wandb'), WANDB_RUN_ID=f'adapt-{name}-20261011',
+               WANDB_DIR=str(ROOT / 'wandb'), WANDB_RUN_ID=f'adapt-{name}-{CAMPAIGN_DATE}',
                TRITON_CACHE_DIR=f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
     if WORLD > 1:
         if WORLD != 2:
@@ -91,7 +92,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--sequence-length', '1024', '--streaming', '--workers', '8',
             '--model', 'llama', '--n-layer', str(layers), '--n-embd', str(width),
             '--n-head', str(heads), '--multiple-of', '256', '--dtype', 'bfloat16', '--dropout', '0',
-            '--opt', opt, '--lr', lr, '--weight-decay', '1e-1', '--momentum', '0.95',
+            '--opt', opt, '--lr', lr, '--weight-decay', weight_decay, '--momentum', '0.95',
             '--muon_beta2', '0.95', '--muon_ns_steps', '5', '--muon2-ns-steps', '5',
             '--beta1', '0.9', '--beta2', '0.95', '--eps', '1e-8', '--grad-clip', '1',
             '--batch-size', '16', '--acc-steps', '8', '--eval-batch-size', '32',
@@ -132,7 +133,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             print('\n'.join(log.read_text().splitlines()[-25:]), flush=True)
         else:
             result = final_metric(metrics, target)
-            result.update(optimizer=opt, lr=lr, size=size, phase=phase,
+            result.update(optimizer=opt, lr=lr, size=size, phase=phase, weight_decay=float(weight_decay),
+                          ns_steps=5, checkpoint_saving=phase == '2xC' and resume is None,
                           wandb_url=f'https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{env["WANDB_RUN_ID"]}')
         atomic_json(done, result)
         print('RUN_VERIFIED=' + json.dumps(result, sort_keys=True), flush=True)
@@ -170,6 +172,16 @@ def main() -> None:
         assert lr in LRS
         for opt in OPTS:
             train(opt, lr, 257, '1xC', 39250)
+    elif MODE == '500m_1xc':
+        if RECOVERY:
+            raise RuntimeError('The corrected1xC run must start from scratch')
+        opt = os.environ['OPTIMIZER']
+        assert opt in OPTS
+        winners = {optimizer: best_lr(optimizer) for optimizer in OPTS}
+        lr = winners[opt]
+        if RANK == 0:
+            atomic_json(ROOT / f'best_lr_{opt}.json', {'optimizer': opt, 'lr': lr})
+        train(opt, lr, 500, '1xC', 75457, weight_decay='1e-4')
     elif MODE == '500m':
         opt = os.environ['OPTIMIZER']
         assert opt in OPTS
