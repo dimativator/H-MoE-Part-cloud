@@ -136,6 +136,9 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         optimizer = torch.optim.Adam(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)#, foreach=False, fused=False)
     elif optimizer_name == "adamw":
         optimizer = torch.optim.AdamW(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)#, foreach=False, fused=False)
+    elif optimizer_name == "horizon_adam":
+        from .horizon_adam import build_horizon_adam
+        optimizer = build_horizon_adam(param_groups, args)
     elif optimizer_name == "ademamix":
         optimizer_cls = FP8AdEMAMix if getattr(args, "fp8_optim", False) else AdEMAMix
         optimizer_kwargs = dict(

@@ -146,7 +146,7 @@ def parse_args(base_parser, args, namespace):
         "--opt",
         default="adamw",
         choices=[
-            "adamw", "sgd", "SFAdamW", "coat_adamw", "triton_coat_adamw",
+            "adamw", "horizon_adam", "sgd", "SFAdamW", "coat_adamw", "triton_coat_adamw",
             "galore_adamw", "coord_adamw", "block_adamw", "adalayer", "block_adalayer",  # Frugal/Coord/Block AdamW
             "coord_muon", "galore_muon", "block_muon",  # Frugal Muon variants
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
@@ -178,6 +178,26 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--softmuon-eps", default=1e-4, type=float)
     parser.add_argument("--softmuon-newton-iters", default=10, type=int)
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
+
+    # HorizonAdam joint moment compression
+    parser.add_argument("--horizon-adam-horizon", default=32, type=int,
+        help="Completed probe-window length used to select the next state codec.")
+    parser.add_argument("--horizon-adam-bits", default=8, type=int,
+        help="Total packed bits per parameter across both moment coordinates (4-16).")
+    parser.add_argument("--horizon-adam-block-size", default=256, type=int,
+        help="Coordinates sharing quantizer means/scales; must be a multiple of 8.")
+    parser.add_argument("--horizon-adam-chunk-size", default=65536, type=int,
+        help="Maximum coordinates decoded at once; must be a multiple of block size.")
+    parser.add_argument("--horizon-adam-probes", default=64, type=int,
+        help="FP32 reference coordinates per compressed tensor.")
+    parser.add_argument("--horizon-adam-min-size", default=4096, type=int,
+        help="Smaller tensors retain ordinary FP32 AdamW moments.")
+    parser.add_argument("--horizon-adam-v-floor", default=1e-30, type=float)
+    parser.add_argument("--horizon-adam-ridge", default=1e-4, type=float)
+    parser.add_argument("--horizon-adam-nearest-rounding", action="store_true",
+        help="Use deterministic nearest rounding instead of counter-based stochastic rounding.")
+    parser.add_argument("--horizon-adam-seed", default=0, type=int,
+        help="Shared rounding seed, independent of model RNG and DDP rank.")
 
     # Weight averaging
     parser.add_argument("--weight-average", action="store_true")
