@@ -13,7 +13,7 @@ LRS = ('1e-4', '5e-4', '1e-3', '2e-3')
 GROUP = 'horizon_adam_257m_lr_20261014'
 TARGET = 39250
 TOKENS_PER_STEP = 128 * 1024
-ROOT = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs2/dimativator/horizon-adam-257m-lr-20261014'))
+ROOT = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs1/dimativator/horizon-adam-257m-lr-20261014'))
 DATA = Path(os.environ.get('DATASETS_DIR', '/workspace-SR006.nfs3/dimativator/fineweb-h200-packed'))
 REPO = Path(__file__).resolve().parents[2]
 SCIENCE = dict(optimizer='horizon_adam', parameters='fp32', activations='bf16', layers=12,
