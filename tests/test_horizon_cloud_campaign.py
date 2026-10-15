@@ -4,14 +4,34 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
+from types import SimpleNamespace
 
 import torch
 
 from config.base import parse_args
-from scripts.cloud.run_horizon_adam_257m import LRS, SCIENCE, TARGET, train_args, validate_resume
+from scripts.cloud.run_horizon_adam_257m import GROUP, LRS, SCIENCE, TARGET, storage_report, train_args, validate_resume
 
 
 class HorizonCloudCampaignTest(TestCase):
+    def test_checkpoint_budget_counts_remaining_space_not_full_campaign_twice(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            disk = SimpleNamespace(total=100_000_000_000, used=91_310_000_000, free=8_690_000_000)
+            with patch('scripts.cloud.run_horizon_adam_257m.ROOT', root), patch('shutil.disk_usage', return_value=disk):
+                self.assertLess(storage_report()['required_free_bytes'], disk.free)
+                run = root / GROUP / 'horizon_adam_257m_b8_h32_lr1e-4_wd1e-1_s0_attempt1'
+                checkpoint = run / 'ckpts' / 'latest'
+                checkpoint.mkdir(parents=True)
+                (run / 'campaign.json').write_text(json.dumps(dict(attempt=1)))
+                with (checkpoint / 'main.pt').open('wb') as stream:
+                    stream.truncate(1_300_000_000)
+                disk.free -= 1_300_000_000
+                self.assertLess(storage_report()['required_free_bytes'], disk.free)
+                disk.free = 100_000_000
+                with self.assertRaisesRegex(RuntimeError, 'Insufficient space'):
+                    storage_report()
+
     def test_all_lr_commands_preserve_scientific_settings(self):
         for lr in LRS:
             for smoke in (True, False):

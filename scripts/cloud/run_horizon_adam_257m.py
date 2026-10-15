@@ -64,10 +64,27 @@ def data_report() -> dict:
 def storage_report(require_space: bool = True) -> dict:
     ROOT.mkdir(parents=True, exist_ok=True)
     disk = shutil.disk_usage(ROOT)
+    # This 257M model plus packed optimizer state is about 1.31 GB. Reserve
+    # 1.5 GB per run and another 2 GB for logs, metadata, and serialization.
+    # Checkpoints already occupying this filesystem must not be reserved twice.
+    checkpoint_bytes_per_run = 1_500_000_000
+    checkpoint_bytes = {}
+    for lr in LRS:
+        attempts = []
+        for directory in (ROOT / GROUP).glob(f'horizon_adam_257m_b8_h32_lr{lr}_wd1e-1_s0_attempt*'):
+            manifest = directory / 'campaign.json'
+            if manifest.is_file():
+                attempts.append((json.loads(manifest.read_text())['attempt'], directory))
+        latest = max(attempts, key=lambda item: item[0])[1] if attempts else None
+        paths = [latest / 'ckpts' / 'latest' / filename for filename in ('main.pt', 'worker_0.pt')] if latest else []
+        checkpoint_bytes[lr] = sum(path.stat().st_size for path in paths if path.is_file())
+    required = 2_000_000_000 + sum(max(0, checkpoint_bytes_per_run - size) for size in checkpoint_bytes.values())
     result = dict(path=str(ROOT), total_bytes=disk.total, used_bytes=disk.used,
-                  free_bytes=disk.free, required_free_bytes=10_000_000_000)
+                  free_bytes=disk.free, required_free_bytes=required,
+                  checkpoint_bytes_per_run=checkpoint_bytes_per_run,
+                  existing_checkpoint_bytes=checkpoint_bytes)
     if require_space and disk.free < result['required_free_bytes']:
-        raise RuntimeError(f'Need at least 10GB free for four rotating checkpoints: {result}')
+        raise RuntimeError(f'Insufficient space for remaining HorizonAdam checkpoints: {result}')
     return result
 
 
