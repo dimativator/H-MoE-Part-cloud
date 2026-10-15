@@ -18,7 +18,7 @@ DATASETS_DIR=${DATASETS_DIR:-/workspace-SR006.nfs3/dimativator/fineweb-h200-pack
 GROUP=lionmuon_probability_257m_1xC_20261012
 RANK_ID=${OMPI_COMM_WORLD_RANK:-0}
 MPI_SIZE=${OMPI_COMM_WORLD_SIZE:-1}
-mkdir -p "$RESULTS_DIR/logs" "$RESULTS_DIR/wandb"
+mkdir -p "$RESULTS_DIR/logs"
 exec > >(tee -a "$RESULTS_DIR/logs/queue_${MODE}_rank${RANK_ID}.log") 2>&1
 echo "QUEUE_START=$(date --iso-8601=seconds) MODE=$MODE GLOBAL_BATCH=128"
 df -h "$RESULTS_DIR"
@@ -32,7 +32,15 @@ else
     LAUNCH=(torchrun --standalone --nproc_per_node=2)
 fi
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false PYTORCH_ALLOC_CONF=expandable_segments:True
-export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_DIR="$RESULTS_DIR/wandb" WANDB_MODE=online
+WANDB_ARGS=()
+if [[ "${ENABLE_WANDB:-1}" == 1 ]]; then
+    mkdir -p "$RESULTS_DIR/wandb"
+    export WANDB_BASE_URL=https://wandb-radfan.ru WANDB_ENTITY=andrey WANDB_DIR="$RESULTS_DIR/wandb" WANDB_MODE=online
+    WANDB_ARGS=(--wandb --wandb-project fp8-pretrain)
+else
+    export WANDB_MODE=disabled
+    echo "WANDB_DISABLED local_metrics_only=1"
+fi
 if [[ "$MODE" == smoke ]]; then
     "${LAUNCH[@]}" scripts/cloud/test_lion_muon_probability.py
 fi
@@ -49,7 +57,7 @@ for schedule in constant linear_up linear_down decay_up decay_down periodic; do
         --lion-muon-probability-schedule "$schedule" --lion-muon-probability-seed 20261012
         --no-local-save --latest-ckpt-interval 0 --permanent-ckpt-interval 0
         --experiment-name "$NAME" --results-base-folder "$RESULTS_DIR" --wandb-group "$GROUP"
-        --wandb --wandb-project fp8-pretrain --wandb-tags LionMuon 257M 1xC bf16 fp32_states "$schedule"
+        "${WANDB_ARGS[@]}"
         --metrics-jsonl "$RESULTS_DIR/$GROUP/$NAME/metrics.jsonl")
     if [[ "$MODE" == smoke ]]; then
         ARGS+=(--early-stop-iteration 2 --eval-interval 2 --eval-batches 1 --log-interval 1)

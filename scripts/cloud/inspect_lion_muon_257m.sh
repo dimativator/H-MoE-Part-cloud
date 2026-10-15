@@ -4,6 +4,16 @@ python - <<'PY'
 import os, json
 from pathlib import Path
 root = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs3/dimativator/lionmuon-probability-257m-20261012'))
+print('INSPECT_ROOT', str(root), 'EXISTS', root.exists(), flush=True)
+dataset = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
+metadata = json.loads((dataset / 'packed_metadata.json').read_text())
+print('DATA_METADATA', {k: metadata.get(k) for k in ['format', 'manifest_fingerprint', 'world_size', 'batch_size', 'iterations']}, flush=True)
+for rank in range(2):
+    log = root / 'logs' / f'queue_smoke_rank{rank}.log'
+    if log.exists():
+        for line in log.read_text().replace('\r', '\n').splitlines():
+            if any(k in line for k in ['LION_MUON_SCHEDULE_RNG_TEST_OK', 'LION_MUON_PERIODIC_PARITY_DDP_TEST_OK', 'LION_MUON_RUN_START', 'LION_MUON_COMPLETE', 'LION_MUON_QUEUE_COMPLETE', 'WANDB_DISABLED', 'Traceback', 'Error']):
+                print(f'SMOKE_RANK{rank}', line, flush=True)
 for schedule in ['constant', 'linear_up', 'linear_down', 'decay_up', 'decay_down', 'periodic']:
     name = f'lionmuon_257m_{schedule}_full'
     print('SCHEDULE', schedule, flush=True)
