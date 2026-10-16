@@ -64,9 +64,9 @@ def data_report() -> dict:
 def storage_report(require_space: bool = True) -> dict:
     ROOT.mkdir(parents=True, exist_ok=True)
     disk = shutil.disk_usage(ROOT)
-    # Reserve two 1.56 GB checkpoint generations per run plus serialization margin.
+    # The existing writer overwrites latest in place. Allow 1.7 GB per 1.56 GB payload.
     # Checkpoints already occupying this filesystem must not be reserved twice.
-    checkpoint_bytes_per_run = 3_600_000_000
+    checkpoint_bytes_per_run = 1_700_000_000
     checkpoint_bytes = {}
     for lr in LRS:
         attempts = []
