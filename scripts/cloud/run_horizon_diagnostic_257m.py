@@ -17,8 +17,8 @@ GROUP = 'horizon_adam_257m_diagnostic_20261016'
 PILOT_STEPS = 5000
 LR = '5e-4'
 JOB_STARTED = time.monotonic()
-# Leave 40 minutes of the aggregate 20 GPU-hour cap for container startup.
-WALL_SECONDS = {'adamw': 6000, 'horizon16': 31800, 'identity8': 31800}
+# Leave room within the aggregate 20 GPU-hour cap for startup and the calibration attempt.
+WALL_SECONDS = {'adamw': 6000, 'horizon16': 23400, 'identity8': 36000}
 VARIANTS = {
     'adamw': dict(optimizer='adamw', bits=None, codec=None),
     'horizon16': dict(optimizer='horizon_adam', bits=16, codec='learned'),
