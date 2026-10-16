@@ -180,6 +180,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # HorizonAdam joint moment compression
+    parser.add_argument("--horizon-adam-codec", default="learned", choices=["learned", "identity"],
+        help="Learn a joint transform/bit allocation, or use separate coordinates and equal bits.")
     parser.add_argument("--horizon-adam-horizon", default=32, type=int,
         help="Completed probe-window length used to select the next state codec.")
     parser.add_argument("--horizon-adam-bits", default=8, type=int,

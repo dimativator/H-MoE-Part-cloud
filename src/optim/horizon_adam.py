@@ -32,18 +32,20 @@ class HorizonAdam(Optimizer):
         weight_decay: float = 1e-2, horizon: int = 32, total_bits: int = 8,
         block_size: int = 256, chunk_size: int = 65536, probe_size: int = 64,
         min_size: int = 4096, v_floor: float = 1e-30, ridge: float = 1e-4,
-        stochastic_rounding: bool = True, rounding_seed: int = 0,
+        stochastic_rounding: bool = True, rounding_seed: int = 0, codec_mode: str = "learned",
     ) -> None:
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay,
                         horizon=horizon, total_bits=total_bits, block_size=block_size,
                         chunk_size=chunk_size, probe_size=probe_size, min_size=min_size,
                         v_floor=v_floor, ridge=ridge, stochastic_rounding=stochastic_rounding,
-                        rounding_seed=rounding_seed)
+                        rounding_seed=rounding_seed, codec_mode=codec_mode)
         self._validate(defaults)
         super().__init__(params, defaults)
 
     @staticmethod
     def _validate(group: dict) -> None:
+        if group.get("codec_mode", "learned") not in ("learned", "identity"):
+            raise ValueError("HorizonAdam codec_mode must be learned or identity")
         for name in ("lr", "weight_decay", "eps", "v_floor", "ridge"):
             value = group[name]
             if not math.isfinite(value) or value < 0:
@@ -109,7 +111,9 @@ class HorizonAdam(Optimizer):
 
     def _compressed_step(self, parameter: Tensor, gradient: Tensor, state: dict, group: dict) -> None:
         flat_parameter, flat_gradient = parameter.view(-1), gradient.view(-1)
-        new_codec = update_probes(state, flat_gradient[state["probe_indices"]].float(), group)
+        new_codec = None
+        if group.get("codec_mode", "learned") == "learned":
+            new_codec = update_probes(state, flat_gradient[state["probe_indices"]].float(), group)
         encoder = state["encoder"] if new_codec is None else new_codec["encoder"]
         bits = state["bits"] if new_codec is None else new_codec["bits"]
         block_size = group["block_size"]
@@ -220,4 +224,5 @@ def build_horizon_adam(param_groups: Iterable, args: Namespace) -> HorizonAdam:
         v_floor=args.horizon_adam_v_floor, ridge=args.horizon_adam_ridge,
         stochastic_rounding=not args.horizon_adam_nearest_rounding,
         rounding_seed=args.horizon_adam_seed,
+        codec_mode=getattr(args, "horizon_adam_codec", "learned"),
     )
