@@ -63,8 +63,12 @@ def protected_files() -> dict:
             for name in filenames:
                 path = Path(parent) / name
                 if name.endswith((".log", ".jsonl")):
-                    checked_path(path)
-                    result[str(path)] = identity(path)
+                    checked_path(path.parent)
+                    if path.is_symlink():
+                        info = path.lstat()
+                        result[str(path)] = ("symlink", os.readlink(path), info.st_ino, info.st_mtime_ns)
+                    else:
+                        result[str(path)] = identity(path)
     require(result, "No protected logs/metrics found")
     return result
 
