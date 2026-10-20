@@ -461,6 +461,37 @@ def main(args):
             total_steps=args.iterations, probability_seed=args.lion_muon_probability_seed,
         )
         print(f"LION_MUON_CONFIG schedule={args.lion_muon_probability_schedule} muon_lr={args.lr} lion_lr={args.lr*0.01} seed={args.lion_muon_probability_seed} states=FP32", flush=True)
+    elif args.opt == "power_lion_muon":
+        from optim.power_lion_muon import PowerLionMuon
+        if args.fp8_optim:
+            raise ValueError("PowerLionMuon requires native FP32 optimizer states")
+        matrices, auxiliary = [], []
+        for name, p in distributed_backend.get_raw_model(model).named_parameters():
+            if not p.requires_grad:
+                continue
+            for translated in distributed_backend.translate_model_parameter_name_for_node(name):
+                param = param_name_mapping[translated]
+                if param.ndim == 2 and not any(k in name for k in ("wte", "lm_head", "embed")):
+                    matrices.append(param)
+                else:
+                    auxiliary.append(param)
+        opt = PowerLionMuon(
+            [dict(params=matrices, use_power=True), dict(params=auxiliary, use_power=False)],
+            total_steps=args.iterations, lr=args.lr, weight_decay=args.weight_decay,
+            momentum=args.power_lion_muon_momentum, probability=args.power_lion_muon_probability,
+            probability_seed=args.power_lion_muon_seed, start_fraction=args.power_lion_muon_start_fraction,
+            exponent_start=args.power_lion_muon_exponent_start, exponent_end=args.power_lion_muon_exponent_end,
+            exponent_gamma=args.power_lion_muon_exponent_gamma,
+            ns_steps=args.power_lion_muon_ns_steps, polynomial_terms=args.power_lion_muon_polynomial_terms,
+            betas=(args.beta1, args.beta2), eps=args.eps,
+        )
+        print(f"POWER_LION_MUON_CONFIG p={args.power_lion_muon_probability} momentum={args.power_lion_muon_momentum} "
+              f"exponent={args.power_lion_muon_exponent_start}->{args.power_lion_muon_exponent_end} "
+              f"start_fraction={args.power_lion_muon_start_fraction} gamma={args.power_lion_muon_exponent_gamma} "
+              f"seed={args.power_lion_muon_seed} states=FP32 spectrum=updated_momentum "
+              f"spectral_backend=ns_binomial ns_steps={args.power_lion_muon_ns_steps} "
+              f"polynomial_terms={args.power_lion_muon_polynomial_terms} "
+              "normalization=internal_scale_restored branch_lr=shared", flush=True)
     elif args.opt == "softmuon":
         from third_party.softsign.softmuon import SingleDeviceSoftMuonWithAuxAdam
         if args.fp8_optim:

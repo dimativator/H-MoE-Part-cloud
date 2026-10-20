@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "lion_muon_probability",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "lion_muon_probability", "power_lion_muon",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
@@ -180,6 +180,16 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--lion-muon-probability-schedule", default="constant",
                         choices=["constant", "linear_up", "linear_down", "decay_up", "decay_down", "periodic"])
     parser.add_argument("--lion-muon-probability-seed", default=20261012, type=int)
+    parser.add_argument("--power-lion-muon-probability", default=0.2, type=float)
+    parser.add_argument("--power-lion-muon-seed", default=20261020, type=int)
+    parser.add_argument("--power-lion-muon-momentum", default=0.95, type=float)
+    parser.add_argument("--power-lion-muon-start-fraction", default=0.9, type=float,
+                        help="Hold initial exponent for this fraction, then ramp to final exponent.")
+    parser.add_argument("--power-lion-muon-exponent-start", default=0.0, type=float)
+    parser.add_argument("--power-lion-muon-exponent-end", default=1.0, type=float)
+    parser.add_argument("--power-lion-muon-exponent-gamma", default=1.0, type=float)
+    parser.add_argument("--power-lion-muon-ns-steps", default=30, type=int)
+    parser.add_argument("--power-lion-muon-polynomial-terms", default=12, type=int)
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging
