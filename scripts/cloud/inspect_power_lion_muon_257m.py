@@ -37,7 +37,7 @@ def main():
                 if log.exists():
                     lines = log.read_text(errors='replace').splitlines()
                     for line in lines:
-                        if any(key in line for key in ('POWER_LION_MUON_CONFIG', 'POWER_LION_MUON_GPU_TEST_OK', 'POWER_LION_MUON_COMPLETE', 'WANDB_DISABLED', 'Traceback', 'Error', 'CHECKPOINT')):
+                        if any(key in line for key in ('POWER_LION_MUON_CONFIG', 'POWER_LION_MUON_GPU_TEST_OK', 'POWER_SPECTRAL_BENCH', 'POWER_LION_MUON_COMPLETE', 'WANDB_DISABLED', 'Traceback', 'Error', 'CHECKPOINT')):
                             print(f'LOG lr={lr} mode={mode} rank={rank} {line}', flush=True)
                     print(f'LOG_TAIL lr={lr} mode={mode} rank={rank} ' + '\n'.join(lines[-3:]), flush=True)
     if ROOT.exists():
