@@ -82,6 +82,18 @@ def storage() -> dict:
 
 
 def main() -> None:
+    if os.environ.get("VERIFY_ONLY", "0") == "1":
+        receipt = Path("/home/jovyan/dimativator/approved-checkpoint-cleanup-20261020.json")
+        checked_path(receipt)
+        with receipt.open() as stream:
+            report = json.load(stream)
+        require(report["status"] == "verified_deleted", "Cleanup receipt not complete")
+        require([item["path"] for item in report["targets"]] == [str(path) for path in TARGETS], "Receipt targets mismatch")
+        for target in TARGETS:
+            checked_path(target.parent)
+            require(not os.path.lexists(target), f"Target still present: {target}")
+        print("CLEANUP_VERIFIED=" + json.dumps({"storage": storage(), "receipt": report}), flush=True)
+        return
     apply = os.environ.get("APPLY", "0") == "1"
     url = f"https://huggingface.co/api/models/DimaTivator/stage3_dense/revision/{REVISION}?blobs=true"
     with urllib.request.urlopen(url, timeout=60) as response:
