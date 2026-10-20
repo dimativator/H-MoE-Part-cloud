@@ -1,13 +1,14 @@
 """Two-rank CUDA gate for both branches and the exponent transition."""
 import os
 import sys
+import time
 from pathlib import Path
 
 import torch
 import torch.distributed as dist
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
-from optim.power_lion_muon import PowerLionMuon
+from optim.power_lion_muon import PowerLionMuon, spectral_power
 
 
 def main():
@@ -30,6 +31,17 @@ def main():
                 dist.all_gather(copies, p)
                 torch.testing.assert_close(copies[0], copies[1], rtol=0, atol=0)
             assert opt.last_exponent == 1.
+        # Exercise the costly late-training path at the largest 257M matrix size.
+        torch.manual_seed(20261020)
+        matrix = torch.randn(3072, 1024, device='cuda') * 1e-3
+        for exponent in (0., 0.5):
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            update = spectral_power(matrix, exponent)
+            torch.cuda.synchronize()
+            assert torch.isfinite(update).all()
+            print(f'POWER_SPECTRAL_BENCH rank={rank} shape=3072x1024 exponent={exponent} '
+                  f'seconds={time.perf_counter()-start} peak_bytes={torch.cuda.max_memory_allocated()}', flush=True)
         print(f'POWER_LION_MUON_GPU_TEST_OK rank={rank} branches=both exponent=0_to_1 states=FP32', flush=True)
         dist.barrier()
     finally:
