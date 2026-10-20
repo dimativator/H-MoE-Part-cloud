@@ -12,6 +12,8 @@ from optim.power_lion_muon import PowerLionMuon, spectral_power
 
 
 def main():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     torch.cuda.set_device(local_rank)
     dist.init_process_group('nccl')
