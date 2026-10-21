@@ -190,8 +190,8 @@ def main() -> None:
             raise RuntimeError('The auxiliary LR experiment must start from scratch')
         subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_adaptive_muon.py', '-v'],
                        env={**os.environ, 'PYTHONPATH': 'src:.'}, check=True)
-        train('normuon', '1e-3', 257, 'aux_smoke', 39250, weight_decay='1e-4')
-        train('normuon', '1e-3', 257, '1xC', 39250, weight_decay='1e-4')
+        train('normuon', '1e-3', 257, 'aux_smoke', 39250, weight_decay='1e-1')
+        train('normuon', '1e-3', 257, '1xC', 39250, weight_decay='1e-1')
     elif MODE == '500m_1xc':
         if RECOVERY:
             raise RuntimeError('The corrected1xC run must start from scratch')

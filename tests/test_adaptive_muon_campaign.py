@@ -2,12 +2,26 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from scripts.cloud import run_adaptive_muon as campaign
 
 
 class CampaignVerificationTest(TestCase):
+    def test_auxiliary_lr_257m_mode_uses_weight_decay_point_one(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'packed_metadata.json').write_text(json.dumps(dict(
+                format='packed_fineweb_h200_v3', iterations=150914, world_size=2, batch_size=16)))
+            with patch.object(campaign, 'ROOT', root), patch.object(campaign, 'DATA', root), \
+                 patch.object(campaign, 'MODE', '257m_aux_lr'), patch.object(campaign, 'RECOVERY', None), \
+                 patch.object(campaign.subprocess, 'run'), patch.object(campaign, 'train') as train:
+                campaign.main()
+            self.assertEqual(train.call_args_list, [
+                call('normuon', '1e-3', 257, 'aux_smoke', 39250, weight_decay='1e-1'),
+                call('normuon', '1e-3', 257, '1xC', 39250, weight_decay='1e-1'),
+            ])
+
     def test_final_metric_uses_native_final_validation_key(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / 'metrics.jsonl'
