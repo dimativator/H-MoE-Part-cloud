@@ -147,3 +147,42 @@ class AdaptiveMuonTest(TestCase):
                 Muon2([torch.nn.Parameter(torch.ones(4, 7))], **kwargs)
         with self.assertRaises(ValueError):
             NorMuon([torch.nn.Parameter(torch.ones(7))])
+
+    def test_explicit_auxiliary_rates_and_scheduler(self):
+        args = parse_args(ArgumentParser(), ["--experiment-name", "audit", "--opt", "normuon",
+                          "--lr", "0.001", "--weight-decay", "0.0001",
+                          "--normuon-embedding-lr", "0.3", "--normuon-output-lr", "0.003"], None)
+        matrix = torch.nn.Parameter(torch.randn(4, 7))
+        embedding = torch.nn.Parameter(torch.randn(11, 7))
+        head = torch.nn.Parameter(torch.randn(11, 7))
+        norm = torch.nn.Parameter(torch.randn(7))
+        groups = [dict(params=[matrix], is_proj_params=True),
+                  dict(params=[embedding, head, norm], is_proj_params=False, weight_decay=0.0)]
+        named = {"module.transformer.wte.weight": embedding, "module.lm_head.weight": head}
+        opt = build_adaptive_muon(groups, args, named_parameters=named)
+        rates = {id(p): group["lr"] for group in opt.param_groups for p in group["params"]}
+        self.assertEqual(rates, {id(matrix): 0.001, id(embedding): 0.3, id(head): 0.003, id(norm): 0.001})
+        self.assertEqual(len({id(p) for g in opt.param_groups for p in g["params"]}), 4)
+        for group in opt.param_groups:
+            if not group["is_proj_params"]:
+                self.assertEqual(group["weight_decay"], 0.0)
+        references = [torch.nn.Parameter(p.detach().clone()) for p in (embedding, head, norm)]
+        adam = torch.optim.AdamW([dict(params=[p], lr=lr) for p, lr in zip(references, (0.3, 0.003, 0.001))],
+                                betas=(args.beta1, args.beta2), eps=args.eps, weight_decay=0.0)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: 0.5 ** step)
+        ref_scheduler = torch.optim.lr_scheduler.LambdaLR(adam, lambda step: 0.5 ** step)
+        for _ in range(3):
+            for p, ref in zip((embedding, head, norm), references):
+                p.grad = torch.randn_like(p)
+                ref.grad = p.grad.clone()
+            opt.step()
+            adam.step()
+            scheduler.step()
+            ref_scheduler.step()
+            for p, ref in zip((embedding, head, norm), references):
+                torch.testing.assert_close(p, ref)
+        with self.assertRaises(ValueError):
+            build_adaptive_muon(groups, args, named_parameters={})
+        with self.assertRaises(ValueError):
+            build_adaptive_muon(groups, args, named_parameters={
+                "transformer.wte.weight": embedding, "lm_head.weight": embedding})

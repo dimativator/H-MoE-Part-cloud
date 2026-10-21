@@ -26,7 +26,7 @@ class CampaignVerificationTest(TestCase):
             for lr, loss in zip(campaign.LRS, (3.1, 2.9, 2.8, 3.0)):
                 path = root / 'finals' / f'muon2_257m_bf16_lr{lr}_wd1e-1_1xC_2gpu.json'
                 campaign.atomic_json(path, dict(iter=39250, val_loss=loss, lr=lr))
-            with patch.object(campaign, 'ROOT', root):
+            with patch.object(campaign, 'SOURCE_ROOT', root):
                 self.assertEqual(campaign.best_lr('muon2'), '1e-3')
                 path.write_text(json.dumps(dict(iter=39000, val_loss=2.7, lr='2e-3')))
                 with self.assertRaises(RuntimeError):

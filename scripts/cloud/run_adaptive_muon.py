@@ -55,6 +55,8 @@ def final_metric(path: Path, target: int) -> dict:
 def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1') -> None:
     group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
     name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_2gpu'
+    if MODE == '257m_aux_lr':
+        name += '_emb3e-1_head3e-3'
     if RECOVERY:
         name += '_storage_retry1'
     decay_resume = resume is not None and phase == '1xC_decay'
@@ -102,7 +104,10 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
             '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', group,
             '--wandb-tags', opt, f'{size}M', phase, 'bf16', 'fp32_states', 'lr_tuning', 'ns5']
-    if MODE == 'smoke':
+    smoke = MODE == 'smoke' or phase == 'aux_smoke'
+    if MODE == '257m_aux_lr':
+        args += ['--normuon-embedding-lr', '0.3', '--normuon-output-lr', '0.003']
+    if smoke:
         args += ['--early-stop-iteration', '2', '--eval-interval', '2', '--eval-batches', '1', '--log-interval', '1', '--no-local-save']
     else:
         args += ['--eval-interval', '500', '--eval-batches', '32', '--log-interval', '50']
@@ -127,7 +132,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         print('\n'.join(log.read_text().splitlines()[-80:]), flush=True)
         raise
     if RANK == 0:
-        if MODE == 'smoke':
+        if smoke:
             result = final_metric(metrics, 2)
             result.update(smoke=True, optimizer=opt, lr=lr, size=size)
             print('\n'.join(log.read_text().splitlines()[-25:]), flush=True)
@@ -136,6 +141,10 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(optimizer=opt, lr=lr, size=size, phase=phase, weight_decay=float(weight_decay),
                           ns_steps=5, checkpoint_saving=phase == '2xC' and resume is None,
                           wandb_url=f'https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{env["WANDB_RUN_ID"]}')
+        if MODE == '257m_aux_lr':
+            result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
+                          adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
+                          ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False)
         atomic_json(done, result)
         print('RUN_VERIFIED=' + json.dumps(result, sort_keys=True), flush=True)
     wait_json(done)
@@ -159,6 +168,10 @@ def main() -> None:
     assert metadata['format'] == 'packed_fineweb_h200_v3'
     assert metadata['iterations'] >= 150914
     assert metadata['world_size'] == 2 and metadata['batch_size'] == 16
+    if MODE == '257m_aux_lr':
+        import shutil
+        if shutil.disk_usage(ROOT).free < 10**9:
+            raise RuntimeError('The auxiliary LR experiment needs at least1GB of free output storage')
     subprocess.run(['df', '-h', str(ROOT), str(DATA)], check=True)
     subprocess.run(['nvidia-smi', '--query-gpu=index,name,memory.used,memory.free', '--format=csv'], check=True)
     subprocess.run(['nvidia-smi', '--query-compute-apps=gpu_uuid,pid,used_gpu_memory', '--format=csv'], check=True)
@@ -172,6 +185,13 @@ def main() -> None:
         assert lr in LRS
         for opt in OPTS:
             train(opt, lr, 257, '1xC', 39250)
+    elif MODE == '257m_aux_lr':
+        if RECOVERY:
+            raise RuntimeError('The auxiliary LR experiment must start from scratch')
+        subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_adaptive_muon.py', '-v'],
+                       env={**os.environ, 'PYTHONPATH': 'src:.'}, check=True)
+        train('normuon', '1e-3', 257, 'aux_smoke', 39250, weight_decay='1e-4')
+        train('normuon', '1e-3', 257, '1xC', 39250, weight_decay='1e-4')
     elif MODE == '500m_1xc':
         if RECOVERY:
             raise RuntimeError('The corrected1xC run must start from scratch')

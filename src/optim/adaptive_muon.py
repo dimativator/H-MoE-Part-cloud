@@ -132,12 +132,51 @@ class NorMuon(_AdaptiveMuon):
         )
 
 
-def build_adaptive_muon(param_groups: list[dict], args) -> _AdaptiveMuon:
+def build_adaptive_muon(param_groups: list[dict], args, named_parameters: dict[str, Tensor] | None = None) -> _AdaptiveMuon:
     """Build from existing is_proj_params groups, preserving no-decay groups."""
     if getattr(args, "fp8_optim", False):
         raise ValueError("Muon² and NorMuon use FP32 states; --fp8-optim is not supported.")
     if getattr(args, "optimizer_state_sharding", False):
         raise ValueError("Muon² and NorMuon use replicated states; --optimizer-state-sharding is not supported.")
+    overrides = {
+        "transformer.wte.weight": getattr(args, "normuon_embedding_lr", None),
+        "lm_head.weight": getattr(args, "normuon_output_lr", None),
+    }
+    overrides = {name: lr for name, lr in overrides.items() if lr is not None}
+    if overrides:
+        if args.opt.lower() != "normuon" or named_parameters is None:
+            raise ValueError("Explicit auxiliary rates require NorMuon and named parameters.")
+        if args.muon_adamw_lr_scale != 1.0:
+            raise ValueError("Explicit auxiliary rates require --muon_adamw_lr_scale 1.")
+        rates = {}
+        for suffix, lr in overrides.items():
+            if not math.isfinite(lr) or lr < 0:
+                raise ValueError("Explicit auxiliary rates must be finite and nonnegative.")
+            matches = [p for name, p in named_parameters.items()
+                       if name == suffix or name.endswith("." + suffix)]
+            if len(matches) != 1:
+                raise ValueError(f"Expected one parameter matching {suffix}, found {len(matches)}.")
+            key = id(matches[0])
+            if key in rates and rates[key] != lr:
+                raise ValueError("Tied embedding/output weights cannot use different rates.")
+            rates[key] = lr
+        split_groups = []
+        assigned = set()
+        for group in param_groups:
+            buckets = {}
+            for p in group["params"]:
+                key = id(p)
+                if key in rates:
+                    if group.get("is_proj_params", True):
+                        raise ValueError("Embedding/output overrides must use auxiliary AdamW.")
+                    assigned.add(key)
+                lr = rates.get(key, group.get("lr", args.lr))
+                buckets.setdefault(lr, []).append(p)
+            split_groups.extend({**group, "params": params, "lr": lr}
+                                for lr, params in buckets.items())
+        if assigned != set(rates):
+            raise ValueError("An explicit auxiliary parameter is missing from optimizer groups.")
+        param_groups = split_groups
     cls = Muon2 if args.opt.lower() == "muon2" else NorMuon
     ns_steps = getattr(args, "muon2_ns_steps", 5) if cls is Muon2 else args.muon_ns_steps
     return cls(

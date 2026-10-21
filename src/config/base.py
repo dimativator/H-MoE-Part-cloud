@@ -579,6 +579,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--muon_headwise", default=False, action="store_true")
     parser.add_argument("--muon_adjust_lr", type=str, choices=['spectral_norm', 'rms_norm'], default="rms_norm")
     parser.add_argument("--muon_adamw_lr_scale", type=float, default=1.0)
+    parser.add_argument("--normuon-embedding-lr", type=float, default=None)
+    parser.add_argument("--normuon-output-lr", type=float, default=None)
     parser.add_argument("--muon_pre_orth_update", type=str, default="default", choices=["default", "ns_adan", "ema"])
     parser.add_argument("--muon_1d_backup", type=str, default="adamw", choices=["adamw", "adan", "lion"])
     parser.add_argument("--muon_beta2", type=float, default=0.95)

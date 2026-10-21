@@ -466,7 +466,7 @@ def main(args):
         print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32 nesterov=False temperature_spectrum=updated_momentum", flush=True)
     elif args.opt in ("muon2", "normuon"):
         from optim.adaptive_muon import build_adaptive_muon
-        opt = build_adaptive_muon(group_specs, args)
+        opt = build_adaptive_muon(group_specs, args, named_parameters=param_name_mapping)
     elif args.opt in ("muon", "muonlite"):
         from third_party.lite.muonlite import MuonLite
         raw_model = distributed_backend.get_raw_model(model)
