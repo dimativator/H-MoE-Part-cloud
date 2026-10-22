@@ -10,6 +10,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument('snapshot', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--baseline', type=Path, help='Verified Muon baseline JSON with validation records')
     args = parser.parse_args()
     import matplotlib
     matplotlib.use('Agg')
@@ -38,9 +39,26 @@ def main() -> None:
         plt.close(figure)
         raise RuntimeError('No finite validation measurements yet; refusing to draw an empty chart')
     frontier = max(points[-1][0] for points in curves)
+    if args.baseline:
+        baseline = json.loads(args.baseline.read_text())
+        points = []
+        for row in baseline['validation']:
+            loss = row.get('final-val/loss', row.get('val/loss'))
+            tokens = row['consumed_tokens'] / 1e9
+            if tokens <= frontier and isinstance(loss, (int, float)) and math.isfinite(loss):
+                points.append((tokens, loss))
+        if not points:
+            raise RuntimeError('Muon baseline has no validation data within the current token budget')
+        points.sort()
+        curves.append(points)
+        x, y = zip(*points)
+        label = f"Muon LR {baseline['lr']:g} · {y[-1]:.4f}"
+        for axis in axes:
+            axis.plot(x, y, color='#222222', linestyle='--', linewidth=2.1, label=label)
+            axis.scatter(x[-1], y[-1], color='#222222', marker='D', s=24)
     left = max(0, frontier * 0.6)
     axes[1].set_xlim(left, max(frontier * 1.02, left + 0.01))
-    recent = [loss for points in curves for tokens, loss in points if tokens >= left]
+    recent = [loss for points in curves for tokens, loss in points if left <= tokens <= frontier]
     low, high = min(recent), max(recent)
     pad = max(0.01, (high - low) * 0.15)
     axes[1].set_ylim(low - pad, high + pad)
