@@ -17,8 +17,9 @@ def main() -> None:
     assert metadata['world_size'] == 2 and metadata['batch_size'] == 16
     assert metadata['iterations'] >= 39250
     for item in metadata['ranks']:
-        path = data / item['file']
-        assert path.is_file() and path.stat().st_size == item['bytes'], str(path)
+        for segment in item.get('segments', [item]):
+            path = data / segment['file']
+            assert path.is_file() and path.stat().st_size == segment['bytes'], str(path)
     assert shutil.disk_usage(root).free >= 10**9
     env = {**os.environ, 'PYTHONPATH': 'src:.'}
     for pattern in ('test_mnd_muon.py', 'test_adaptive_muon*.py', 'test_fineweb*replay*.py'):
