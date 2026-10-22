@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 
-LRS = ('0.01', '0.02', '0.03', '0.045')
+LRS = ('5e-4', '1e-3', '3e-3', '5e-3')
 ITERATIONS = 39250
 TOKENS_PER_STEP = 128 * 1024
 DATA = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
