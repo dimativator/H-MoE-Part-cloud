@@ -464,6 +464,9 @@ def main(args):
                  betas=(args.beta1, args.beta2), eps=args.eps),
         ])
         print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32 nesterov=False temperature_spectrum=updated_momentum", flush=True)
+    elif args.opt == "mnd_muon":
+        from optim.mnd_muon import build_mnd_muon
+        opt = build_mnd_muon(group_specs, args)
     elif args.opt in ("muon2", "normuon"):
         from optim.adaptive_muon import build_adaptive_muon
         opt = build_adaptive_muon(group_specs, args, named_parameters=param_name_mapping)

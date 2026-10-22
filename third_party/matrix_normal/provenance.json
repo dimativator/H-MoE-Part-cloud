@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/parshakova/matrix_normal_optimizers",
+  "revision": "8a3b701f32a151363ae8b905605145cc48f81a3a",
+  "source": "mnopt/utils.py",
+  "source_sha256": "e9a7f5bd603c4e5fc7072fcc5064024005f1459e944dcee424693856cadd2cd9",
+  "extracted_functions": [
+    "balance",
+    "inverse",
+    "inverse_sqrt",
+    "mnd_muon_momentum",
+    "polar_express",
+    "variance_root"
+  ],
+  "license": "Apache-2.0"
+}

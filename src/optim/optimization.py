@@ -178,6 +178,9 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             adamw_lr_scale=args.muon_adamw_lr_scale,
             dampening=args.dampening
         )
+    elif optimizer_name == "mnd_muon":
+        from .mnd_muon import build_mnd_muon
+        optimizer = build_mnd_muon(param_groups, args)
     elif optimizer_name in ("muon2", "normuon"):
         from .adaptive_muon import build_adaptive_muon
         optimizer = build_adaptive_muon(param_groups, args)
