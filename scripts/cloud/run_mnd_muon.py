@@ -104,8 +104,8 @@ def main() -> None:
     try:
         with log.open('x') as output:
             subprocess.run(command, env=env, stdout=output, stderr=subprocess.STDOUT,
-                           check=True, timeout=24 * 3600)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                           check=True)
+    except subprocess.CalledProcessError:
         print('\n'.join(log.read_text().splitlines()[-80:]), flush=True)
         raise
     result = verify_final(metrics)
