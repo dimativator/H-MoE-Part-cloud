@@ -12,11 +12,14 @@ def main() -> None:
         if not root.exists():
             continue
         for directory, folders, files in os.walk(root):
-            folders[:] = [name for name in folders if name not in ('.git', '.cache', 'datasets', 'ckpts', 'checkpoints')]
+            folders[:] = [name for name in folders if name not in
+                          ('.git', '.cache', 'datasets', 'ckpts', 'checkpoints', 'wandb', 'wandb_offline')]
             for filename in files:
                 if not (filename.endswith('.jsonl') or filename.endswith('.log')):
                     continue
                 path = Path(directory) / filename
+                if not path.is_file():
+                    continue
                 if not re.search(r'(^|[/_\-])muon([/_\-.]|$)', str(path).lower()):
                     continue
                 if path.stat().st_size > 100 * 10**6:
