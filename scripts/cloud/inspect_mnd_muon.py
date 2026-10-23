@@ -37,7 +37,7 @@ def main() -> None:
         final = root / 'finals' / f'{name}.json'
         record['verified_final'] = json.loads(final.read_text()) if final.exists() else None
         snapshot['runs'].append(record)
-    print('MND_MUON_SNAPSHOT=' + json.dumps(snapshot, sort_keys=True), flush=True)
+    print('MND_MUON_SNAPSHOT=' + json.dumps(snapshot, sort_keys=True, indent=2), flush=True)
 
 
 if __name__ == '__main__':
