@@ -79,7 +79,7 @@ class _AdaptiveMuon(torch.optim.Optimizer):
                 state = self.state[p]
                 if not state:
                     state["momentum"] = torch.zeros_like(g)
-                    shape = g[:, :1] if self._row_variance and group["is_proj_params"] else g
+                    shape = self._variance_template(g, group)
                     state["variance"] = torch.zeros_like(shape)
                     state["step"] = 0
                 state["step"] += 1
@@ -88,13 +88,19 @@ class _AdaptiveMuon(torch.optim.Optimizer):
                 else:
                     b1, b2 = group["adamw_betas"]
                     state["momentum"].lerp_(g, 1 - b1)
-                    state["variance"].lerp_(g.square(), 1 - b2)
+                    state["variance"].lerp_(self._squared_statistic(g, group), 1 - b2)
                     m = state["momentum"] / (1 - b1 ** state["step"])
                     v = state["variance"] / (1 - b2 ** state["step"])
                     update = m / (v.sqrt() + group["eps"])
                 p.mul_(1 - group["lr"] * group["weight_decay"])
                 p.add_(update.to(p.dtype), alpha=-group["lr"])
         return loss
+
+    def _variance_template(self, g: Tensor, group: dict) -> Tensor:
+        return g[:, :1] if self._row_variance and group["is_proj_params"] else g
+
+    def _squared_statistic(self, g: Tensor, group: dict) -> Tensor:
+        return g.square()
 
 
 class Muon2(_AdaptiveMuon):
@@ -177,7 +183,12 @@ def build_adaptive_muon(param_groups: list[dict], args, named_parameters: dict[s
         if assigned != set(rates):
             raise ValueError("An explicit auxiliary parameter is missing from optimizer groups.")
         param_groups = split_groups
-    cls = Muon2 if args.opt.lower() == "muon2" else NorMuon
+    if args.opt.lower() == "slim_normuon":
+        from .slim_normuon import SlimNorMuon, compression_groups
+        param_groups = compression_groups(param_groups, named_parameters)
+        cls = SlimNorMuon
+    else:
+        cls = Muon2 if args.opt.lower() == "muon2" else NorMuon
     ns_steps = getattr(args, "muon2_ns_steps", 5) if cls is Muon2 else args.muon_ns_steps
     return cls(
         param_groups, lr=args.lr, momentum=args.momentum,

@@ -1,0 +1,12 @@
+{
+  "token_embedding": ["transformer.wte.weight"],
+  "lm_head": ["lm_head.weight"],
+  "attention_query": ["attn.q_proj.weight"],
+  "attention_key": ["attn.k_proj.weight"],
+  "attention_value": ["attn.v_proj.weight"],
+  "attention_output": ["attn.o_proj.weight"],
+  "mlp_up": ["mlp.up_proj.weight"],
+  "mlp_gate": ["mlp.gate_proj.weight"],
+  "mlp_down": ["mlp.down_proj.weight"],
+  "norm": ["ln_1.weight", "ln_2.weight", "ln_f.weight"]
+}

@@ -104,7 +104,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
             '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', group,
             '--wandb-tags', opt, f'{size}M', phase, 'bf16', 'fp32_states', 'lr_tuning', 'ns5']
-    smoke = MODE == 'smoke' or phase == 'aux_smoke'
+    smoke = MODE == 'smoke' or phase in ('aux_smoke', 'slim_smoke')
     if MODE == '257m_aux_lr':
         args += ['--normuon-embedding-lr', '0.3', '--normuon-output-lr', '0.003']
     if smoke:
@@ -141,6 +141,12 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(optimizer=opt, lr=lr, size=size, phase=phase, weight_decay=float(weight_decay),
                           ns_steps=5, checkpoint_saving=phase == '2xC' and resume is None,
                           wandb_url=f'https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{env["WANDB_RUN_ID"]}')
+        if MODE == '257m_slim_normuon':
+            result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
+                          compression_map='layer_map_llama_paper.json',
+                          auxiliary_lr=float(lr), auxiliary_weight_decay=0.0,
+                          matrix_momentum=0.95, matrix_beta2=0.95, adamw_betas=[0.9, 0.95],
+                          weight_decay=float(weight_decay), ns_steps=5, checkpoint_saving=False)
         if MODE == '257m_aux_lr':
             result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
@@ -185,6 +191,14 @@ def main() -> None:
         assert lr in LRS
         for opt in OPTS:
             train(opt, lr, 257, '1xC', 39250)
+    elif MODE == '257m_slim_normuon':
+        if RECOVERY:
+            raise RuntimeError('SlimNorMuon must start from scratch')
+        lr = os.environ['LR']
+        if lr not in LRS:
+            raise ValueError('Unrequested LR')
+        train('slim_normuon', lr, 257, 'slim_smoke', 39250, weight_decay='1e-1')
+        train('slim_normuon', lr, 257, '1xC', 39250, weight_decay='1e-1')
     elif MODE == '257m_aux_lr':
         if RECOVERY:
             raise RuntimeError('The auxiliary LR experiment must start from scratch')

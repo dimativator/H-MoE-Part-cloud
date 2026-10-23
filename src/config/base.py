@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "muon2", "normuon", "mnd_muon",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "muon2", "normuon", "slim_normuon", "mnd_muon",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP

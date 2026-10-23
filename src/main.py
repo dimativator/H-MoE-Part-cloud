@@ -467,7 +467,7 @@ def main(args):
     elif args.opt == "mnd_muon":
         from optim.mnd_muon import build_mnd_muon
         opt = build_mnd_muon(group_specs, args)
-    elif args.opt in ("muon2", "normuon"):
+    elif args.opt in ("muon2", "normuon", "slim_normuon"):
         from optim.adaptive_muon import build_adaptive_muon
         opt = build_adaptive_muon(group_specs, args, named_parameters=param_name_mapping)
     elif args.opt in ("muon", "muonlite"):

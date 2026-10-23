@@ -181,9 +181,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
     elif optimizer_name == "mnd_muon":
         from .mnd_muon import build_mnd_muon
         optimizer = build_mnd_muon(param_groups, args)
-    elif optimizer_name in ("muon2", "normuon"):
+    elif optimizer_name in ("muon2", "normuon", "slim_normuon"):
         from .adaptive_muon import build_adaptive_muon
-        optimizer = build_adaptive_muon(param_groups, args)
+        optimizer = build_adaptive_muon(param_groups, args,
+                                        named_parameters=dict(model.named_parameters()) if model is not None else None)
     elif optimizer_name == "adamuon":
         for group in param_groups:
             if not group.get("is_proj_params", False):
