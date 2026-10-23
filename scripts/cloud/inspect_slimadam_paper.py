@@ -80,7 +80,7 @@ def main() -> None:
         for rank in (0, 1):
             record['logs'][str(rank)] = log_tail(root / 'logs' / f'{name}_rank{rank}.log')
         snapshot['runs'].append(record)
-    print('SLIMADAM_PAPER_SNAPSHOT=' + json.dumps(snapshot, sort_keys=True), flush=True)
+    print('SLIMADAM_PAPER_SNAPSHOT=' + json.dumps(snapshot, sort_keys=True, indent=2), flush=True)
 
 
 if __name__ == '__main__':
