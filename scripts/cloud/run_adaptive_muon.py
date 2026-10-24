@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import socket
+import signal
 import subprocess
 import sys
 import time
@@ -77,7 +78,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                PYTORCH_ALLOC_CONF='expandable_segments:True', WANDB_MODE=os.environ.get('WANDB_MODE', 'offline'),
                WANDB_BASE_URL='https://wandb-radfan.ru', WANDB_ENTITY='andrey',
                WANDB_DIR=str(ROOT / 'wandb'), WANDB_RUN_ID=f'adapt-{name}-{CAMPAIGN_DATE}',
-               TRITON_CACHE_DIR=f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
+               TRITON_CACHE_DIR=str(ROOT / 'cache' / f'triton-{opt}-{RANK}-{os.getpid()}') if MODE == '500m_slim_normuon' else f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
     if WORLD > 1:
         if WORLD != 2:
             raise RuntimeError('Exactly two MPI ranks required')
@@ -127,7 +128,45 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     print(f'RUN_START optimizer={opt} lr={lr} size={size} phase={phase} rank={RANK} log={log}', flush=True)
     try:
         with log.open('x') as output:
-            subprocess.run(launch + args, env=env, stdout=output, stderr=subprocess.STDOUT, check=True)
+            if MODE == '500m_slim_normuon':
+                process = subprocess.Popen(launch + args, env=env, stdout=output,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+                last_report = 0.0
+                try:
+                    while process.poll() is None:
+                        if RANK == 0 and time.monotonic() - last_report >= 60:
+                            last_report = time.monotonic()
+                            live = {'phase': phase, 'snapshot_time': time.time()}
+                            try:
+                                status = ROOT / 'disk_status.json'
+                                if status.exists():
+                                    live['disk'] = json.loads(status.read_text())
+                                if metrics.exists():
+                                    with metrics.open('rb') as stream:
+                                        stream.seek(max(0, metrics.stat().st_size - 32768))
+                                        lines = stream.read().splitlines()
+                                    for line in reversed(lines):
+                                        try:
+                                            live['metric'] = json.loads(line)
+                                            break
+                                        except json.JSONDecodeError:
+                                            continue
+                            except (OSError, ValueError) as exc:
+                                live['telemetry_error'] = str(exc)
+                            print('LIVE_STATUS=' + json.dumps(live), flush=True)
+                        time.sleep(2)
+                    if process.returncode:
+                        raise subprocess.CalledProcessError(process.returncode, launch + args)
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait()
+            else:
+                subprocess.run(launch + args, env=env, stdout=output, stderr=subprocess.STDOUT, check=True)
     except subprocess.CalledProcessError:
         print('\n'.join(log.read_text().splitlines()[-80:]), flush=True)
         raise
@@ -141,12 +180,12 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(optimizer=opt, lr=lr, size=size, phase=phase, weight_decay=float(weight_decay),
                           ns_steps=5, checkpoint_saving=phase == '2xC' and resume is None,
                           wandb_url=f'https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{env["WANDB_RUN_ID"]}')
-        if MODE == '257m_slim_normuon':
+        if MODE in ('257m_slim_normuon', '500m_slim_normuon'):
             result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
                           compression_map='layer_map_llama_paper.json',
                           auxiliary_lr=float(lr), auxiliary_weight_decay=0.0,
                           matrix_momentum=0.95, matrix_beta2=0.95, adamw_betas=[0.9, 0.95],
-                          weight_decay=float(weight_decay), ns_steps=5, checkpoint_saving=False)
+                          weight_decay=float(weight_decay), ns_steps=5, checkpoint_saving=phase == '2xC')
         if MODE == '257m_aux_lr':
             result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
@@ -199,6 +238,13 @@ def main() -> None:
             raise ValueError('Unrequested LR')
         train('slim_normuon', lr, 257, 'slim_smoke', 39250, weight_decay='1e-1')
         train('slim_normuon', lr, 257, '1xC', 39250, weight_decay='1e-1')
+    elif MODE == '500m_slim_normuon':
+        if RECOVERY:
+            raise RuntimeError('This campaign starts from scratch')
+        train('slim_normuon', '1e-3', 500, 'slim_smoke', 150914, weight_decay='1e-4')
+        train('slim_normuon', '1e-3', 500, '2xC', 150914, weight_decay='1e-4')
+        checkpoint = ROOT / f'adaptive_muon_500M_2xC_{CAMPAIGN_DATE}' / 'slim_normuon_500m_bf16_lr1e-3_wd1e-4_2xC_2gpu' / 'ckpts' / '67911'
+        train('slim_normuon', '1e-3', 500, '1xC_decay', 75457, resume=checkpoint, weight_decay='1e-4')
     elif MODE == '257m_aux_lr':
         if RECOVERY:
             raise RuntimeError('The auxiliary LR experiment must start from scratch')

@@ -369,6 +369,8 @@ def train(
         "downstream": [],
         "aux_lm": [],
     }
+    from .disk_guard import from_environment
+    disk_guard = from_environment()
     inter_ckpt_steps = set(cfg.inter_ckpts)
     model.train()
 
@@ -420,6 +422,16 @@ def train(
         _t_opt  = []
 
     while curr_iter <= cfg.iterations:
+        checkpoint_due = exp_dir is not None and curr_iter > 0 and (
+            curr_iter in inter_ckpt_steps
+            or (cfg.permanent_ckpt_interval > 0 and curr_iter % cfg.permanent_ckpt_interval == 0)
+            or (cfg.latest_ckpt_interval > 0 and (curr_iter % cfg.latest_ckpt_interval == 0 or curr_iter == cfg.iterations))
+        )
+        if disk_guard is not None and (curr_iter % 10 == 0 or checkpoint_due):
+            # FP32 parameters plus full momentum and compressed variance, with
+            # room for serialization and both workers' RNG/data states.
+            checkpoint_bytes = sum(p.numel() * 12 for p in model.parameters()) + 64_000_000 if checkpoint_due else 0
+            disk_guard.check(extra_bytes=checkpoint_bytes)
         # Save permanent checkpoint
         if curr_iter > 0 and cfg.permanent_ckpt_interval > 0 and exp_dir is not None:
             if curr_iter % cfg.permanent_ckpt_interval == 0:
