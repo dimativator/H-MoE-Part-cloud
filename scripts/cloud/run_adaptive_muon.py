@@ -78,7 +78,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                PYTORCH_ALLOC_CONF='expandable_segments:True', WANDB_MODE=os.environ.get('WANDB_MODE', 'offline'),
                WANDB_BASE_URL='https://wandb-radfan.ru', WANDB_ENTITY='andrey',
                WANDB_DIR=str(ROOT / 'wandb'), WANDB_RUN_ID=f'adapt-{name}-{CAMPAIGN_DATE}',
-               TRITON_CACHE_DIR=str(ROOT / 'cache' / f'triton-{opt}-{RANK}-{os.getpid()}') if MODE == '500m_slim_normuon' else f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
+               TRITON_CACHE_DIR=str(ROOT / 'cache' / f'triton-{opt}-{RANK}-{os.getpid()}') if MODE in ('500m_slim_normuon', 'matched') else f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
     if WORLD > 1:
         if WORLD != 2:
             raise RuntimeError('Exactly two MPI ranks required')
@@ -105,7 +105,9 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
             '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', group,
             '--wandb-tags', opt, f'{size}M', phase, 'bf16', 'fp32_states', 'lr_tuning', 'ns5']
-    smoke = MODE == 'smoke' or phase in ('aux_smoke', 'slim_smoke')
+    smoke = MODE == 'smoke' or phase in ('aux_smoke', 'slim_smoke', 'matched_smoke')
+    if MODE == 'matched':
+        args += ['--muon_adamw_lr_scale', str(0.001 / float(lr))]
     if MODE == '257m_aux_lr':
         args += ['--normuon-embedding-lr', '0.3', '--normuon-output-lr', '0.003']
     if smoke:
@@ -128,7 +130,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     print(f'RUN_START optimizer={opt} lr={lr} size={size} phase={phase} rank={RANK} log={log}', flush=True)
     try:
         with log.open('x') as output:
-            if MODE == '500m_slim_normuon':
+            if MODE in ('500m_slim_normuon', 'matched'):
                 process = subprocess.Popen(launch + args, env=env, stdout=output,
                                            stderr=subprocess.STDOUT, start_new_session=True)
                 last_report = 0.0
@@ -190,6 +192,13 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
                           ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False)
+        if MODE == 'matched':
+            result.update(update_rms=0.2, row_normalization=opt == 'normuon_matched',
+                          ns_kernel='official_quintic_3.4445_-4.7750_2.0315',
+                          auxiliary_lr=0.001, auxiliary_weight_decay=0.0,
+                          adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
+                          ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False,
+                          wandb_mode=env['WANDB_MODE'])
         atomic_json(done, result)
         print('RUN_VERIFIED=' + json.dumps(result, sort_keys=True), flush=True)
     wait_json(done)

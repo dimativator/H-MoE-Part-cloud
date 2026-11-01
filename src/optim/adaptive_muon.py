@@ -183,6 +183,15 @@ def build_adaptive_muon(param_groups: list[dict], args, named_parameters: dict[s
         if assigned != set(rates):
             raise ValueError("An explicit auxiliary parameter is missing from optimizer groups.")
         param_groups = split_groups
+    if args.opt.lower() in ("muon_matched", "normuon_matched"):
+        from .matched_muon import MatchedMuon
+        return MatchedMuon(
+            param_groups, row_normalization=args.opt.lower() == "normuon_matched",
+            lr=args.lr, momentum=args.momentum, beta2=args.muon_beta2,
+            ns_steps=args.muon_ns_steps, eps=args.eps, weight_decay=args.weight_decay,
+            nesterov=args.nesterov, adamw_betas=(args.beta1, args.beta2),
+            adamw_lr_scale=args.muon_adamw_lr_scale,
+        )
     if args.opt.lower() == "slim_normuon":
         from .slim_normuon import SlimNorMuon, compression_groups
         param_groups = compression_groups(param_groups, named_parameters)
