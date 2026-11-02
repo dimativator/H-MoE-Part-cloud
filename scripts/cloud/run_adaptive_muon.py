@@ -192,6 +192,10 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
                           ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False)
+        if MODE == 'matched' and opt == 'slim_normuon_matched':
+            result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
+                          compression_map='layer_map_llama_paper.json', second_moment_normalization=True,
+                          compression_rule='Q_K_dim1_V_O_up_gate_down_dim0_embedding_head_dim1_norm_full')
         if MODE == 'matched':
             result.update(update_rms=0.2, row_normalization=opt == 'normuon_matched',
                           ns_kernel='official_quintic_3.4445_-4.7750_2.0315',

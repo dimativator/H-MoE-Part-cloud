@@ -192,10 +192,10 @@ def build_adaptive_muon(param_groups: list[dict], args, named_parameters: dict[s
             nesterov=args.nesterov, adamw_betas=(args.beta1, args.beta2),
             adamw_lr_scale=args.muon_adamw_lr_scale,
         )
-    if args.opt.lower() == "slim_normuon":
-        from .slim_normuon import SlimNorMuon, compression_groups
+    if args.opt.lower() in ("slim_normuon", "slim_normuon_matched"):
+        from .slim_normuon import SlimNorMuon, SlimMatchedNorMuon, compression_groups
         param_groups = compression_groups(param_groups, named_parameters)
-        cls = SlimNorMuon
+        cls = SlimMatchedNorMuon if args.opt.lower() == "slim_normuon_matched" else SlimNorMuon
     else:
         cls = Muon2 if args.opt.lower() == "muon2" else NorMuon
     ns_steps = getattr(args, "muon2_ns_steps", 5) if cls is Muon2 else args.muon_ns_steps

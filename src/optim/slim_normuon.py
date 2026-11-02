@@ -81,3 +81,16 @@ class SlimNorMuon(NorMuon):
         update.mul_(1 / (state["variance"].sqrt() + 1e-10))
         update.mul_(original_norm / (update.norm(dim=(-2, -1), keepdim=True) + 1e-10))
         return update * math.sqrt(max(1, g.size(0) / g.size(1)))
+
+
+class SlimMatchedNorMuon(SlimNorMuon):
+    """SlimAdam variance axes with the matched pair's exact update RMS."""
+
+    def _matrix_update(self, g: Tensor, state: dict, group: dict) -> Tensor:
+        state["momentum"].lerp_(g, 1 - group["momentum"])
+        direction = g.lerp(state["momentum"], group["momentum"]) if group["nesterov"] else state["momentum"]
+        update = zeropower_via_newtonschulz5(direction, steps=group["ns_steps"]).float()
+        state["variance"].lerp_(self._squared_statistic(update, group), 1 - group["beta2"])
+        update = update / (state["variance"].sqrt() + 1e-10)
+        rms = update.square().mean().sqrt()
+        return update * (0.2 / rms.clamp_min(1e-10))
