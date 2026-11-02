@@ -74,7 +74,7 @@ class SlimMatchedNorMuonTest(TestCase):
 
     def test_cloud_smoke_then_full_no_other_optimizer(self):
         cloud = Path(__file__).resolve().parents[1] / 'scripts/cloud'
-        with patch.dict(os.environ, {'MODE': 'matched'}), patch.object(sys, 'path', [str(cloud), *sys.path]):
+        with patch.dict(os.environ, {'MODE': 'matched', 'LR': '5e-4'}), patch.object(sys, 'path', [str(cloud), *sys.path]):
             spec = importlib.util.spec_from_file_location('slim_matched_campaign', cloud / 'run_slim_matched_normuon.py')
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -84,3 +84,20 @@ class SlimMatchedNorMuonTest(TestCase):
                 ('slim_normuon_matched', '5e-4', 257, 'matched_smoke', 39250),
                 ('slim_normuon_matched', '5e-4', 257, '1xC', 39250)])
             self.assertTrue(all(x.kwargs == {'weight_decay': '1e-1'} for x in train.call_args_list))
+
+    def test_cloud_grid_keeps_all_other_settings_fixed(self):
+        cloud = Path(__file__).resolve().parents[1] / 'scripts/cloud'
+        with patch.object(sys, 'path', [str(cloud), *sys.path]):
+            spec = importlib.util.spec_from_file_location('slim_matched_grid', cloud / 'run_slim_matched_normuon.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        for lr in ('1e-4', '5e-4', '1e-3', '2e-3'):
+            with patch.dict(os.environ, {'LR': lr}), patch.object(module, 'preflight'), patch.object(module.campaign, 'train') as train:
+                module.main()
+            self.assertEqual([c.args for c in train.call_args_list], [
+                ('slim_normuon_matched', lr, 257, 'matched_smoke', 39250),
+                ('slim_normuon_matched', lr, 257, '1xC', 39250)])
+            self.assertTrue(all(c.kwargs == {'weight_decay': '1e-1'} for c in train.call_args_list))
+        with patch.dict(os.environ, {'LR': '0.1'}), patch.object(module, 'preflight'):
+            with self.assertRaises(ValueError):
+                module.main()
