@@ -21,6 +21,9 @@ RANK = int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 WORLD = int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))
 MODE = os.environ.get('MODE', 'smoke')
 CAMPAIGN_DATE = os.environ.get('CAMPAIGN_DATE', '20261011')
+TRAIN_WORLD = int(os.environ.get('CLOUD_TRAIN_WORLD_SIZE', '2'))
+if TRAIN_WORLD not in (2, 4) or (TRAIN_WORLD == 4 and MODE != 'matched'):
+    raise ValueError('Only matched campaigns support four training GPUs')
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -55,7 +58,7 @@ def final_metric(path: Path, target: int) -> dict:
 
 def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1') -> None:
     group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
-    name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_2gpu'
+    name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_{TRAIN_WORLD}gpu'
     if MODE == '257m_aux_lr':
         name += '_emb3e-1_head3e-3'
     if RECOVERY:
@@ -80,14 +83,14 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                WANDB_DIR=str(ROOT / 'wandb'), WANDB_RUN_ID=f'adapt-{name}-{CAMPAIGN_DATE}',
                TRITON_CACHE_DIR=str(ROOT / 'cache' / f'triton-{opt}-{RANK}-{os.getpid()}') if MODE in ('500m_slim_normuon', 'matched') else f'/tmp/adaptive-muon-{opt}-{RANK}-{os.getpid()}')
     if WORLD > 1:
-        if WORLD != 2:
-            raise RuntimeError('Exactly two MPI ranks required')
-        env.update(RANK=str(RANK), WORLD_SIZE='2',
+        if WORLD != TRAIN_WORLD:
+            raise RuntimeError(f'Exactly {TRAIN_WORLD} MPI ranks required')
+        env.update(RANK=str(RANK), WORLD_SIZE=str(TRAIN_WORLD),
                    LOCAL_RANK=os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'),
                    MASTER_ADDR=rendezvous['master_addr'], MASTER_PORT=str(rendezvous['master_port']))
         launch = [sys.executable]
     else:
-        launch = [sys.executable, '-m', 'torch.distributed.run', '--standalone', '--nproc_per_node=2']
+        launch = [sys.executable, '-m', 'torch.distributed.run', '--standalone', f'--nproc_per_node={TRAIN_WORLD}']
     layers, width, heads = (12, 1024, 8) if size == 257 else (18, 1280, 20)
     args = ['src/main.py', '--distributed-backend', 'nccl', '--experiment-name', name,
             '--seed', '0', '--data-seed', '1337', '--dataset', 'fineweb', '--datasets-dir', str(DATA),
@@ -98,7 +101,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--opt', opt, '--lr', lr, '--weight-decay', weight_decay, '--momentum', '0.95',
             '--muon_beta2', '0.95', '--muon_ns_steps', '5', '--muon2-ns-steps', '5',
             '--beta1', '0.9', '--beta2', '0.95', '--eps', '1e-8', '--grad-clip', '1',
-            '--batch-size', '16', '--acc-steps', '8', '--eval-batch-size', '32',
+            '--batch-size', str(32 // TRAIN_WORLD), '--acc-steps', str(4 * TRAIN_WORLD), '--eval-batch-size', '32',
             '--iterations', str(target), '--scheduler', 'wsd', '--warmup-steps', '0' if decay_resume else '2000',
             '--wsd-fract-decay', '1.0' if decay_resume else '0.1', '--wsd-final-lr-scale', '0', '--decay-type', 'cosine',
             '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0',
@@ -202,7 +205,9 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           auxiliary_lr=0.001, auxiliary_weight_decay=0.0,
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
                           ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False,
-                          wandb_mode=env['WANDB_MODE'])
+                          wandb_mode=env['WANDB_MODE'], physical_world_size=TRAIN_WORLD,
+                          global_batch_size=128, microbatch_per_gpu=32 // TRAIN_WORLD,
+                          accumulation_per_gpu=4)
         atomic_json(done, result)
         print('RUN_VERIFIED=' + json.dumps(result, sort_keys=True), flush=True)
     wait_json(done)
