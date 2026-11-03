@@ -64,6 +64,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     if RECOVERY:
         name += '_storage_retry1'
     decay_resume = resume is not None and phase == '1xC_decay'
+    checkpoint_saving = (phase == '2xC' and resume is None
+                         and os.environ.get('CLOUD_DISABLE_CHECKPOINTS') != '1')
     run_dir = ROOT / group / name
     metrics = run_dir / 'metrics.jsonl'
     done = ROOT / 'finals' / f'{name}.json'
@@ -117,7 +119,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         args += ['--early-stop-iteration', '2', '--eval-interval', '2', '--eval-batches', '1', '--log-interval', '1', '--no-local-save']
     else:
         args += ['--eval-interval', '500', '--eval-batches', '32', '--log-interval', '50']
-        if phase == '2xC' and resume is None:
+        if checkpoint_saving:
             args += ['--inter-ckpts', '67911']
         else:
             args += ['--no-local-save']
@@ -183,14 +185,14 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         else:
             result = final_metric(metrics, target)
             result.update(optimizer=opt, lr=lr, size=size, phase=phase, weight_decay=float(weight_decay),
-                          ns_steps=5, checkpoint_saving=phase == '2xC' and resume is None,
+                          ns_steps=5, checkpoint_saving=checkpoint_saving,
                           wandb_url=f'https://wandb-radfan.ru/andrey/fp8-pretrain/runs/{env["WANDB_RUN_ID"]}')
         if MODE in ('257m_slim_normuon', '500m_slim_normuon'):
             result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
                           compression_map='layer_map_llama_paper.json',
                           auxiliary_lr=float(lr), auxiliary_weight_decay=0.0,
                           matrix_momentum=0.95, matrix_beta2=0.95, adamw_betas=[0.9, 0.95],
-                          weight_decay=float(weight_decay), ns_steps=5, checkpoint_saving=phase == '2xC')
+                          weight_decay=float(weight_decay), ns_steps=5, checkpoint_saving=checkpoint_saving)
         if MODE == '257m_aux_lr':
             result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
@@ -204,7 +206,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           ns_kernel='official_quintic_3.4445_-4.7750_2.0315',
                           auxiliary_lr=0.001, auxiliary_weight_decay=0.0,
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
-                          ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False,
+                          ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=checkpoint_saving,
                           wandb_mode=env['WANDB_MODE'], physical_world_size=TRAIN_WORLD,
                           global_batch_size=128, microbatch_per_gpu=32 // TRAIN_WORLD,
                           accumulation_per_gpu=4)

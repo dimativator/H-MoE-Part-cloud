@@ -14,6 +14,10 @@ logs = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
 paths = ('/workspace-SR006.nfs3', logs, '/home/jovyan', '/tmp', '/')
 print('SPACE_SNAPSHOT=' + json.dumps(dict(timestamp=time.time(), logs_dir=logs,
       available_bytes={p: shutil.disk_usage(p).free for p in paths})), flush=True)
+if os.environ.get('CHECK_PACKED_DATA') == '1':
+    metadata = json.loads(Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed/packed_metadata.json').read_text())
+    print('PACKED_DATA=' + json.dumps({key: metadata[key] for key in
+          ('format', 'world_size', 'batch_size', 'sequence_length', 'iterations')}), flush=True)
 for path in sorted(root.glob('**/finals/*.json')):
     print('FINAL=' + json.dumps(json.loads(path.read_text())), flush=True)
 for path in sorted(root.glob('**/disk_status.json')):
