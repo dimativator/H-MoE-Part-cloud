@@ -22,8 +22,8 @@ WORLD = int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))
 MODE = os.environ.get('MODE', 'smoke')
 CAMPAIGN_DATE = os.environ.get('CAMPAIGN_DATE', '20261011')
 TRAIN_WORLD = int(os.environ.get('CLOUD_TRAIN_WORLD_SIZE', '2'))
-if TRAIN_WORLD not in (2, 4) or (TRAIN_WORLD == 4 and MODE != 'matched'):
-    raise ValueError('Only matched campaigns support four training GPUs')
+if TRAIN_WORLD not in (1, 2, 4) or (TRAIN_WORLD != 2 and MODE != 'matched'):
+    raise ValueError('Only matched campaigns support one or four training GPUs')
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -63,6 +63,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         name += '_emb3e-1_head3e-3'
     if RECOVERY:
         name += '_storage_retry1'
+    if opt == 'slim_normuon_lion':
+        name += f'_p{int(os.environ["SLIM_LION_PERIOD"])}'
     decay_resume = resume is not None and phase == '1xC_decay'
     checkpoint_saving = (phase == '2xC' and resume is None
                          and os.environ.get('CLOUD_DISABLE_CHECKPOINTS') != '1')
@@ -96,7 +98,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     layers, width, heads = (12, 1024, 8) if size == 257 else (18, 1280, 20)
     args = ['src/main.py', '--distributed-backend', 'nccl', '--experiment-name', name,
             '--seed', '0', '--data-seed', '1337', '--dataset', 'fineweb', '--datasets-dir', str(DATA),
-            '--fineweb-replay-world-size', '1', '--fineweb-replay-layout', 'concat',
+            '--fineweb-replay-world-size', '2' if TRAIN_WORLD == 1 else '1', '--fineweb-replay-layout', 'concat',
             '--sequence-length', '1024', '--streaming', '--workers', '8',
             '--model', 'llama', '--n-layer', str(layers), '--n-embd', str(width),
             '--n-head', str(heads), '--multiple-of', '256', '--dtype', 'bfloat16', '--dropout', '0',
@@ -115,8 +117,12 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         args += ['--muon_adamw_lr_scale', str(0.001 / float(lr))]
     if MODE == '257m_aux_lr':
         args += ['--normuon-embedding-lr', '0.3', '--normuon-output-lr', '0.003']
+    smoke_steps = 2 * int(os.environ['SLIM_LION_PERIOD']) if opt == 'slim_normuon_lion' else 2
+    if opt == 'slim_normuon_lion':
+        args += ['--slim-lion-period', os.environ['SLIM_LION_PERIOD'],
+                 '--slim-lion-lr-ratio', '0.01', '--slim-lion-momentum', '0.99']
     if smoke:
-        args += ['--early-stop-iteration', '2', '--eval-interval', '2', '--eval-batches', '1', '--log-interval', '1', '--no-local-save']
+        args += ['--early-stop-iteration', str(smoke_steps), '--eval-interval', str(smoke_steps), '--eval-batches', '1', '--log-interval', '1', '--no-local-save']
     else:
         args += ['--eval-interval', '500', '--eval-batches', '32', '--log-interval', '50']
         if checkpoint_saving:
@@ -179,7 +185,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         raise
     if RANK == 0:
         if smoke:
-            result = final_metric(metrics, 2)
+            result = final_metric(metrics, smoke_steps)
             result.update(smoke=True, optimizer=opt, lr=lr, size=size)
             print('\n'.join(log.read_text().splitlines()[-25:]), flush=True)
         else:
@@ -197,7 +203,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(embedding_lr=0.3, output_lr=0.003, norm_lr=float(lr),
                           adamw_betas=[0.9, 0.95], matrix_momentum=0.95, matrix_beta2=0.95,
                           ns_steps=5, weight_decay=float(weight_decay), checkpoint_saving=False)
-        if MODE == 'matched' and opt == 'slim_normuon_matched':
+        if MODE == 'matched' and opt in ('slim_normuon_matched', 'slim_normuon_lion'):
             result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
                           compression_map='layer_map_llama_paper.json', second_moment_normalization=True,
                           compression_rule='Q_K_dim1_V_O_up_gate_down_dim0_embedding_head_dim1_norm_full')
@@ -210,6 +216,13 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           wandb_mode=env['WANDB_MODE'], physical_world_size=TRAIN_WORLD,
                           global_batch_size=128, microbatch_per_gpu=32 // TRAIN_WORLD,
                           accumulation_per_gpu=4)
+        if opt == 'slim_normuon_lion':
+            result.update(period=int(os.environ['SLIM_LION_PERIOD']), lion_lr_ratio=0.01,
+                          lion_lr=0.01 * float(lr), direction_beta=0.95, matrix_momentum=0.99,
+                          momentum_rule='shared_lion_pre_update_direction',
+                          second_moment_clock='slim_steps_only', slim_update_rms=0.2,
+                          update_rms=None, first_slim_step=int(os.environ['SLIM_LION_PERIOD']),
+                          fineweb_replay_world_size=2 if TRAIN_WORLD == 1 else 1)
         atomic_json(done, result)
         print('RUN_VERIFIED=' + json.dumps(result, sort_keys=True), flush=True)
     wait_json(done)

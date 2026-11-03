@@ -122,6 +122,7 @@ def define_wandb_metrics(downstream_evaluator=None, lm_evaluator=None):
     wandb.define_metric("tok_gpu_sec", step_metric="iter")
     wandb.define_metric("grad_norm", step_metric="iter")
     wandb.define_metric("consumed_tokens", step_metric="iter")
+    wandb.define_metric("slim_normuon_lion/*", step_metric="iter")
 
     if downstream_evaluator is not None:
         for metric_glob in downstream_evaluator.wandb_metric_globs():
@@ -467,7 +468,7 @@ def main(args):
     elif args.opt == "mnd_muon":
         from optim.mnd_muon import build_mnd_muon
         opt = build_mnd_muon(group_specs, args)
-    elif args.opt in ("muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched"):
+    elif args.opt in ("muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "slim_normuon_lion"):
         from optim.adaptive_muon import build_adaptive_muon
         opt = build_adaptive_muon(group_specs, args, named_parameters=param_name_mapping)
     elif args.opt in ("muon", "muonlite"):

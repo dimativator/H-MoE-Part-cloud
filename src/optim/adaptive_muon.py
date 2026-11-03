@@ -92,9 +92,13 @@ class _AdaptiveMuon(torch.optim.Optimizer):
                     m = state["momentum"] / (1 - b1 ** state["step"])
                     v = state["variance"] / (1 - b2 ** state["step"])
                     update = m / (v.sqrt() + group["eps"])
-                p.mul_(1 - group["lr"] * group["weight_decay"])
-                p.add_(update.to(p.dtype), alpha=-group["lr"])
+                lr = self._step_lr(group)
+                p.mul_(1 - lr * group["weight_decay"])
+                p.add_(update.to(p.dtype), alpha=-lr)
         return loss
+
+    def _step_lr(self, group: dict) -> float:
+        return group["lr"]
 
     def _variance_template(self, g: Tensor, group: dict) -> Tensor:
         return g[:, :1] if self._row_variance and group["is_proj_params"] else g
@@ -192,16 +196,23 @@ def build_adaptive_muon(param_groups: list[dict], args, named_parameters: dict[s
             nesterov=args.nesterov, adamw_betas=(args.beta1, args.beta2),
             adamw_lr_scale=args.muon_adamw_lr_scale,
         )
-    if args.opt.lower() in ("slim_normuon", "slim_normuon_matched"):
+    if args.opt.lower() in ("slim_normuon", "slim_normuon_matched", "slim_normuon_lion"):
         from .slim_normuon import SlimNorMuon, SlimMatchedNorMuon, compression_groups
         param_groups = compression_groups(param_groups, named_parameters)
         cls = SlimMatchedNorMuon if args.opt.lower() == "slim_normuon_matched" else SlimNorMuon
+        if args.opt.lower() == "slim_normuon_lion":
+            from .slim_normuon_lion import SlimNorMuonLion
+            cls = SlimNorMuonLion
     else:
         cls = Muon2 if args.opt.lower() == "muon2" else NorMuon
     ns_steps = getattr(args, "muon2_ns_steps", 5) if cls is Muon2 else args.muon_ns_steps
+    extra = {}
+    if args.opt.lower() == "slim_normuon_lion":
+        extra = dict(period=args.slim_lion_period, lion_lr_ratio=args.slim_lion_lr_ratio,
+                     lion_momentum=args.slim_lion_momentum)
     return cls(
         param_groups, lr=args.lr, momentum=args.momentum,
         beta2=args.muon_beta2, ns_steps=ns_steps, eps=args.eps,
         weight_decay=args.weight_decay, nesterov=args.nesterov,
-        adamw_betas=(args.beta1, args.beta2), adamw_lr_scale=args.muon_adamw_lr_scale,
+        adamw_betas=(args.beta1, args.beta2), adamw_lr_scale=args.muon_adamw_lr_scale, **extra,
     )

@@ -767,9 +767,11 @@ def train(
                 f"consumed_tokens={consumed_tokens}"
             )
 
+            extra_optimizer_metrics = opt.get_step_metrics() if hasattr(opt, "get_step_metrics") else {}
             _log_local_metric(
                 cfg,
                 {
+                    **extra_optimizer_metrics,
                     "event": "train",
                     "iter": curr_iter,
                     "train/loss": train_loss,
@@ -788,6 +790,7 @@ def train(
             if cfg.wandb:
                 wandb.log(
                     {
+                        **extra_optimizer_metrics,
                         "iter": curr_iter,
                         "train/loss": train_loss,
                         "train/perplexity": 2.71828**train_loss,

@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "mnd_muon",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "slim_normuon_lion", "mnd_muon",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
@@ -587,6 +587,9 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--muon_pre_orth_update", type=str, default="default", choices=["default", "ns_adan", "ema"])
     parser.add_argument("--muon_1d_backup", type=str, default="adamw", choices=["adamw", "adan", "lion"])
     parser.add_argument("--muon_beta2", type=float, default=0.95)
+    parser.add_argument("--slim-lion-period", type=int, default=5)
+    parser.add_argument("--slim-lion-lr-ratio", type=float, default=0.01)
+    parser.add_argument("--slim-lion-momentum", type=float, default=0.99)
     parser.add_argument("--adan_beta1", type=float, default=0.98)
     parser.add_argument("--adan_beta2", type=float, default=0.92)
     parser.add_argument("--adan_beta3", type=float, default=0.99)
