@@ -18,7 +18,8 @@ def main() -> None:
     repo = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repo / 'src'))
     lr = os.environ['LR']
-    if lr not in campaign.LRS or campaign.TRAIN_WORLD != 2:
+    allowed_lrs = (*campaign.LRS, '3e-3', '4e-3', '5e-3', '6e-3')
+    if lr not in allowed_lrs or campaign.TRAIN_WORLD != 2:
         raise ValueError('Expected an authorized LR and exactly two GPUs')
     print('SOFTMUON_CAMPAIGN=' + json.dumps(dict(
         code_revision=os.environ['CODE_REVISION'], matrix_lr=float(lr), auxiliary_lr=0.001,
