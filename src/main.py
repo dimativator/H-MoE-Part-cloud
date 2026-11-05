@@ -457,14 +457,17 @@ def main(args):
                 else:
                     auxiliary.append(param)
         sign_iters = int(args.iterations * args.softmuon_sign_fraction)
+        auxiliary_lr = args.lr if args.softmuon_aux_lr is None else args.softmuon_aux_lr
+        if auxiliary_lr <= 0:
+            raise ValueError("SoftMuon auxiliary LR must be positive")
         opt = SingleDeviceSoftMuonWithAuxAdam([
             dict(params=matrices, use_muon=True, lr=args.lr, weight_decay=args.weight_decay,
                  momentum=0.95, sign_iters=sign_iters, transition_iters=args.iterations-sign_iters,
                  eps=args.softmuon_eps, newton_iters=args.softmuon_newton_iters),
-            dict(params=auxiliary, use_muon=False, lr=args.lr, weight_decay=args.weight_decay,
+            dict(params=auxiliary, use_muon=False, lr=auxiliary_lr, weight_decay=args.weight_decay,
                  betas=(args.beta1, args.beta2), eps=args.eps),
         ])
-        print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32 nesterov=False temperature_spectrum=updated_momentum", flush=True)
+        print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32 nesterov=False temperature_spectrum=updated_momentum matrix_lr={args.lr} auxiliary_lr={auxiliary_lr} weight_decay={args.weight_decay} update_scale=original_shape_factor", flush=True)
     elif args.opt == "mnd_muon":
         from optim.mnd_muon import build_mnd_muon
         opt = build_mnd_muon(group_specs, args)

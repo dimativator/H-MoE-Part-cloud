@@ -177,6 +177,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--softmuon-sign-fraction", default=0.9, type=float)
     parser.add_argument("--softmuon-eps", default=1e-4, type=float)
     parser.add_argument("--softmuon-newton-iters", default=10, type=int)
+    parser.add_argument("--softmuon-aux-lr", default=None, type=float)
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging
