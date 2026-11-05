@@ -18,6 +18,11 @@ for path in ('/workspace-SR006.nfs2', '/home/jovyan/shares/SR006.nfs2'):
         record = dict(path=path, error=str(exc))
     print('NFS2_READ_ONLY=' + json.dumps(dict(timestamp=time.time(), **record)), flush=True)
 if os.environ.get('SOFT_LION_MUON_PREFLIGHT') == '1':
+    import_env = os.environ.copy()
+    import_env.pop('PYTHONPATH', None)
+    import_env['CUDA_VISIBLE_DEVICES'] = ''
+    subprocess.run([sys.executable, 'scripts/cloud/test_soft_lion_muon_gpu.py', '--imports-only'],
+                   check=True, env=import_env)
     env = {**os.environ, 'PYTHONPATH': str(repo / 'src') + ':' + str(repo), 'OMP_NUM_THREADS': '2'}
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests',
                     '-p', 'test_soft_lion_muon*.py', '-v'], check=True, env=env)

@@ -8,8 +8,14 @@ import time
 import torch
 import torch.distributed as dist
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+repo = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(repo))
+sys.path.insert(0, str(repo / 'src'))
 from optim.soft_lion_muon import SoftLionMuon, elementwise_softsign, spectral_softsign
+
+if '--imports-only' in sys.argv:
+    print('SOFT_LION_MUON_IMPORT_TEST_OK', flush=True)
+    raise SystemExit(0)
 
 rank = int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 world = int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))

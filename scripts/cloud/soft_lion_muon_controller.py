@@ -19,11 +19,11 @@ import subprocess
 import time
 import urllib.request
 
-BRANCH = 'codex/soft-lion-muon-cloud-20261105'
+BRANCH = 'codex/soft-lion-muon-cloud-r1-20261105'
 REPO = 'https://github.com/dimativator/H-MoE-Part-cloud.git'
-ROOT = '/workspace-SR006.nfs3/dimativator/soft-lion-muon-20261105'
+ROOT = '/workspace-SR006.nfs3/dimativator/soft-lion-muon-20261105-r1'
 LOGS = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
-GATEWAY = Path('/home/dimativator/soft-lion-muon-20261105')
+GATEWAY = Path('/home/dimativator/soft-lion-muon-20261105-r1')
 LRS = ('2e-3', '1e-3', '5e-4', '1e-4')
 CONFIG_KEYS = ('opt', 'lr', 'weight_decay', 'iterations', 'seed', 'data_seed', 'dtype',
     'model_parameter_dtype', 'batch_size', 'acc_steps', 'sequence_length', 'no_local_save',
@@ -174,7 +174,7 @@ def submit(label: str, revision: str, *, size: int = 257, lr: str | None = None)
         # No submission has been attempted or receipt created yet. Retrying
         # this read-only inventory check cannot duplicate a training job.
         raise ConnectionError('Scheduler inventory unavailable before submission')
-    note = 'soft_lion_muon_' + label + '_20261105'
+    note = 'soft_lion_muon_' + label + '_20261105_r1'
     if note in inventory['stdout']:
         raise RuntimeError('Matching scheduler job exists without a receipt')
     auth = netrc.netrc().authenticators('wandb-radfan.ru')
