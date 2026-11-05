@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "slim_normuon_lion", "mnd_muon",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "soft_lion_muon", "muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "slim_normuon_lion", "mnd_muon",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
@@ -178,6 +178,15 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--softmuon-eps", default=1e-4, type=float)
     parser.add_argument("--softmuon-newton-iters", default=10, type=int)
     parser.add_argument("--softmuon-aux-lr", default=None, type=float)
+    parser.add_argument("--soft-lion-muon-period", default=5, type=int)
+    parser.add_argument("--soft-lion-muon-beta1", default=0.95, type=float)
+    parser.add_argument("--soft-lion-muon-beta2", default=0.99, type=float)
+    parser.add_argument("--soft-lion-muon-lr-ratio", default=0.01, type=float)
+    parser.add_argument("--soft-lion-muon-start-fraction", default=0.9, type=float)
+    parser.add_argument("--soft-lion-muon-eps", default=1e-4, type=float)
+    parser.add_argument("--soft-lion-muon-ns-steps", default=6, type=int)
+    parser.add_argument("--soft-lion-muon-soft-ns-steps", default=30, type=int)
+    parser.add_argument("--soft-lion-muon-aux-lr", default=0.001, type=float)
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging

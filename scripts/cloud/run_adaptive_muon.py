@@ -58,6 +58,8 @@ def final_metric(path: Path, target: int) -> dict:
 
 def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1') -> None:
     group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
+    if opt == 'soft_lion_muon':
+        group = f'soft_lion_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
     name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_{TRAIN_WORLD}gpu'
     if MODE == '257m_aux_lr':
         name += '_emb3e-1_head3e-3'
@@ -119,6 +121,11 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         args += ['--softmuon-aux-lr', '0.001', '--eps', '1e-10',
                  '--softmuon-sign-fraction', '0.9', '--softmuon-eps', '1e-4',
                  '--softmuon-newton-iters', '10']
+    if opt == 'soft_lion_muon':
+        args += ['--soft-lion-muon-aux-lr', '0.001', '--soft-lion-muon-period', '5',
+                 '--soft-lion-muon-beta1', '0.95', '--soft-lion-muon-beta2', '0.99',
+                 '--soft-lion-muon-start-fraction', '0.9', '--soft-lion-muon-eps', '1e-4',
+                 '--soft-lion-muon-ns-steps', '6', '--soft-lion-muon-soft-ns-steps', '30']
     if MODE == '257m_aux_lr':
         args += ['--normuon-embedding-lr', '0.3', '--normuon-output-lr', '0.003']
     smoke_steps = 2 * int(os.environ['SLIM_LION_PERIOD']) if opt == 'slim_normuon_lion' else 2
@@ -152,7 +159,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                 last_disk_check = 0.0
                 try:
                     while process.poll() is None:
-                        if opt == 'softmuon' and time.monotonic() - last_disk_check >= 30:
+                        if opt in ('softmuon', 'soft_lion_muon') and time.monotonic() - last_disk_check >= 30:
                             from optim.disk_guard import DiskSpaceEmergency, available
                             last_disk_check = time.monotonic()
                             paths = [Path(p) for p in json.loads(env['CLOUD_DISK_GUARD_PATHS'])]
@@ -223,7 +230,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
                           compression_map='layer_map_llama_paper.json', second_moment_normalization=True,
                           compression_rule='Q_K_dim1_V_O_up_gate_down_dim0_embedding_head_dim1_norm_full')
-        if MODE == 'matched' and opt != 'softmuon':
+        if MODE == 'matched' and opt not in ('softmuon', 'soft_lion_muon'):
             result.update(update_rms=0.2, row_normalization=opt == 'normuon_matched',
                           ns_kernel='official_quintic_3.4445_-4.7750_2.0315',
                           auxiliary_lr=0.001, auxiliary_weight_decay=0.0,
@@ -243,6 +250,16 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           global_batch_size=128, microbatch_per_gpu=32 // TRAIN_WORLD,
                           accumulation_per_gpu=4, seed=0, data_seed=1337,
                           wandb_mode=env['WANDB_MODE'])
+        if opt == 'soft_lion_muon':
+            result.update(algorithm='SoftLionMuon', period=5, lion_lr_ratio=0.01,
+                          direction_beta=0.95, momentum_beta=0.99,
+                          auxiliary_lr=0.001, auxiliary_weight_decay=float(weight_decay),
+                          adamw_betas=[0.9, 0.95], adamw_eps=1e-8,
+                          temperature_source='pre_update_lion_direction', separate_temperatures=True,
+                          transition_start=int(target * 0.9), epsilon=1e-4,
+                          ns_steps=6, soft_ns_steps=30, checkpoint_saving=False,
+                          physical_world_size=TRAIN_WORLD, global_batch_size=128,
+                          seed=0, data_seed=1337, wandb_mode=env['WANDB_MODE'])
         if opt == 'slim_normuon_lion':
             result.update(period=int(os.environ['SLIM_LION_PERIOD']), lion_lr_ratio=0.01,
                           lion_lr=0.01 * float(lr), direction_beta=0.95, matrix_momentum=0.99,

@@ -441,6 +441,33 @@ def main(args):
             quantile=args.solo_quantile,
             block_size=args.solo_block_sizes[0],
         )
+    elif args.opt == "soft_lion_muon":
+        from optim.soft_lion_muon import SoftLionMuon
+        if args.fp8_optim:
+            raise ValueError("SoftLionMuon requires FP32 optimizer states")
+        matrices, auxiliary = [], []
+        for name, p in distributed_backend.get_raw_model(model).named_parameters():
+            for translated in distributed_backend.translate_model_parameter_name_for_node(name):
+                param = param_name_mapping[translated]
+                if param.ndim == 2 and not any(k in name for k in ("wte", "lm_head", "embed")):
+                    matrices.append(param)
+                else:
+                    auxiliary.append(param)
+        opt = SoftLionMuon([
+            dict(params=matrices, use_soft_lion_muon=True, lr=args.lr),
+            dict(params=auxiliary, use_soft_lion_muon=False, lr=args.soft_lion_muon_aux_lr),
+        ], total_steps=args.iterations, weight_decay=args.weight_decay,
+            beta1=args.soft_lion_muon_beta1, beta2=args.soft_lion_muon_beta2,
+            period=args.soft_lion_muon_period, lion_lr_ratio=args.soft_lion_muon_lr_ratio,
+            start_fraction=args.soft_lion_muon_start_fraction, epsilon=args.soft_lion_muon_eps,
+            ns_steps=args.soft_lion_muon_ns_steps, soft_ns_steps=args.soft_lion_muon_soft_ns_steps,
+            betas=(args.beta1, args.beta2), eps=args.eps)
+        print(f"SOFT_LION_MUON_CONFIG matrix_lr={args.lr} auxiliary_lr={args.soft_lion_muon_aux_lr} "
+              f"period={args.soft_lion_muon_period} beta1={args.soft_lion_muon_beta1} "
+              f"beta2={args.soft_lion_muon_beta2} lion_lr_ratio={args.soft_lion_muon_lr_ratio} "
+              f"transition_start={int(args.iterations * args.soft_lion_muon_start_fraction)} "
+              f"weight_decay={args.weight_decay} states=FP32 calibration=pre_update_lion_direction "
+              f"soft_map=algebraic separate_temperatures=True", flush=True)
     elif args.opt == "softmuon":
         from third_party.softsign.softmuon import SingleDeviceSoftMuonWithAuxAdam
         if args.fp8_optim:
