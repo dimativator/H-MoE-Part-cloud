@@ -273,8 +273,10 @@ def advance(revision: str) -> dict:
         if preflight(257, revision):
             state['stage'] = 'submit257'
     elif stage == 'submit257':
-        for lr in LRS:
-            submit(f'257m_lr{lr}', revision, lr=lr)
+        # Independent, exclusively recorded submissions share the same fresh
+        # storage proof. Slow API responses must not age it for later trials.
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(lambda lr: submit(f'257m_lr{lr}', revision, lr=lr), LRS))
         state['stage'] = 'sweep257'
     elif stage in ('sweep257', 'run500'):
         records = snapshot()['trials']
