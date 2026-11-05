@@ -2,7 +2,9 @@
 
 import copy
 import importlib.util
+import json
 from pathlib import Path
+import time
 import unittest
 from unittest.mock import patch
 import tempfile
@@ -65,8 +67,8 @@ class ControllerTest(unittest.TestCase):
     def test_inventory_timeout_does_not_create_a_submission_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'preflight257_verified.json').write_text(__import__('json').dumps(dict(
-                timestamp=__import__('time').time(), code_revision='a' * 40,
+            (root / 'preflight257_verified.json').write_text(json.dumps(dict(
+                timestamp=time.time(), code_revision='a' * 40,
                 available_bytes={'output': 10_000_000_000})))
             with patch.object(controller, 'GATEWAY', root), \
                  patch.object(controller, 'check_policy'), \
