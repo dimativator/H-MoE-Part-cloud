@@ -171,7 +171,9 @@ def submit(label: str, revision: str, *, size: int = 257, lr: str | None = None)
             raise RuntimeError('Unauthorized LR')
     inventory = command(['mlsub', 'list'])
     if inventory.get('returncode') != 0:
-        raise RuntimeError('Scheduler inventory unavailable')
+        # No submission has been attempted or receipt created yet. Retrying
+        # this read-only inventory check cannot duplicate a training job.
+        raise ConnectionError('Scheduler inventory unavailable before submission')
     note = 'soft_lion_muon_' + label + '_20261105'
     if note in inventory['stdout']:
         raise RuntimeError('Matching scheduler job exists without a receipt')

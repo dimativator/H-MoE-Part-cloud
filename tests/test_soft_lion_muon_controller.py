@@ -4,6 +4,8 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+import tempfile
 
 path = Path(__file__).resolve().parents[1] / 'scripts/cloud/soft_lion_muon_controller.py'
 spec = importlib.util.spec_from_file_location('controller', path)
@@ -59,6 +61,19 @@ class ControllerTest(unittest.TestCase):
         record['wandb']['summary'].update(iter=75457, consumed_tokens=75457 * 128 * 1024)
         self.assertEqual(controller.validate_final(record, 500, '1e-3'), 2.8)
         self.assertIn('wd1e-4_1xC_4gpu', controller.run_name(500, '1e-3'))
+
+    def test_inventory_timeout_does_not_create_a_submission_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'preflight257_verified.json').write_text(__import__('json').dumps(dict(
+                timestamp=__import__('time').time(), code_revision='a' * 40,
+                available_bytes={'output': 10_000_000_000})))
+            with patch.object(controller, 'GATEWAY', root), \
+                 patch.object(controller, 'check_policy'), \
+                 patch.object(controller, 'command', return_value={'error': 'timeout'}):
+                with self.assertRaises(ConnectionError):
+                    controller.submit('257m_lr2e-3', 'a' * 40, lr='2e-3')
+            self.assertFalse((root / '257m_lr2e-3.json').exists())
 
 
 if __name__ == '__main__':
