@@ -197,7 +197,9 @@ def submit(label: str, revision: str, *, size: int = 257, lr: str | None = None)
     with path.open('x') as stream:
         json.dump(record, stream)
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=90)
+        # The gateway's HTTP connect/read timeout is 600s. Let it report its
+        # actual result rather than orphaning a still-pending submission.
+        result = subprocess.run(args, capture_output=True, text=True, timeout=660)
         record.update(returncode=result.returncode, stdout=result.stdout.replace(key, '[REDACTED]'),
                       stderr=result.stderr.replace(key, '[REDACTED]'))
         match = re.search(r'lm-mpi-job-[0-9a-f-]+', record['stdout'])
