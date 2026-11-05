@@ -106,7 +106,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--muon_beta2', '0.95', '--muon_ns_steps', '5', '--muon2-ns-steps', '5',
             '--beta1', '0.9', '--beta2', '0.95', '--eps', '1e-8', '--grad-clip', '1',
             '--batch-size', str(32 // TRAIN_WORLD), '--acc-steps', str(4 * TRAIN_WORLD), '--eval-batch-size', '32',
-            '--iterations', str(target), '--scheduler', 'wsd', '--warmup-steps', '0' if decay_resume else '2000',
+            '--iterations', str(target), '--scheduler', 'wsd', '--warmup-steps', '0' if decay_resume else '7000' if opt == 'softmuon' and size == 500 else '2000',
             '--wsd-fract-decay', '1.0' if decay_resume else '0.1', '--wsd-final-lr-scale', '0', '--decay-type', 'cosine',
             '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0',
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
