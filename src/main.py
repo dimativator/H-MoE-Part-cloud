@@ -123,6 +123,7 @@ def define_wandb_metrics(downstream_evaluator=None, lm_evaluator=None):
     wandb.define_metric("grad_norm", step_metric="iter")
     wandb.define_metric("consumed_tokens", step_metric="iter")
     wandb.define_metric("slim_normuon_lion/*", step_metric="iter")
+    wandb.define_metric("anvil2/*", step_metric="iter")
 
     if downstream_evaluator is not None:
         for metric_glob in downstream_evaluator.wandb_metric_globs():
@@ -495,6 +496,13 @@ def main(args):
                  betas=(args.beta1, args.beta2), eps=args.eps),
         ])
         print(f"SOFTMUON_CONFIG sign_iters={sign_iters} transition_iters={args.iterations-sign_iters} states=FP32 nesterov=False temperature_spectrum=updated_momentum matrix_lr={args.lr} auxiliary_lr={auxiliary_lr} weight_decay={args.weight_decay} update_scale=original_shape_factor", flush=True)
+    elif args.opt == "anvil2":
+        from optim.anvil2 import build_anvil2
+        opt = build_anvil2(group_specs, args, named_parameters=param_name_mapping)
+        print(f"ANVIL2_CONFIG total_steps={args.iterations} engage_step={opt.control['engage_step']} "
+              f"adam_betas=({args.beta1},{args.beta2}) states=FP32 cautious_decay=True "
+              f"matrix_decay_scaling=extra_lr auxiliary=muon_adamw auxiliary_lr={args.lr} "
+              f"auxiliary_eps=1e-8 auxiliary_update_every=1", flush=True)
     elif args.opt == "mnd_muon":
         from optim.mnd_muon import build_mnd_muon
         opt = build_mnd_muon(group_specs, args)

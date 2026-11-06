@@ -60,6 +60,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
     if opt == 'soft_lion_muon':
         group = f'soft_lion_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
+    if opt == 'anvil2':
+        group = f'anvil2_{size}M_{phase}_{CAMPAIGN_DATE}'
     name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_{TRAIN_WORLD}gpu'
     if MODE == '257m_aux_lr':
         name += '_emb3e-1_head3e-3'
@@ -113,10 +115,14 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0',
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
             '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', group,
-            '--wandb-tags', opt, f'{size}M', phase, 'bf16', 'fp32_states', 'lr_tuning', 'ns5']
+            '--wandb-tags', opt, f'{size}M', phase, 'bf16', 'fp32_states', 'lr_tuning',
+            'anvil_maps6' if opt == 'anvil2' else 'ns5']
     smoke = MODE == 'smoke' or phase in ('aux_smoke', 'slim_smoke', 'matched_smoke')
-    if MODE == 'matched':
+    if MODE == 'matched' and opt != 'anvil2':
         args += ['--muon_adamw_lr_scale', str(0.001 / float(lr))]
+    if opt == 'anvil2':
+        args += ['--anvil2-engage-fraction', '0.5', '--anvil2-momentum-warmup-steps', '240',
+                 '--anvil2-momentum-cooldown-steps', '50', '--model-parameter-dtype', 'float32']
     if opt == 'softmuon':
         args += ['--softmuon-aux-lr', '0.001', '--eps', '1e-10',
                  '--softmuon-sign-fraction', '0.9', '--softmuon-eps', '1e-4',
@@ -159,7 +165,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                 last_disk_check = 0.0
                 try:
                     while process.poll() is None:
-                        if opt in ('softmuon', 'soft_lion_muon') and time.monotonic() - last_disk_check >= 30:
+                        if opt in ('softmuon', 'soft_lion_muon', 'anvil2') and time.monotonic() - last_disk_check >= 30:
                             from optim.disk_guard import DiskSpaceEmergency, available
                             last_disk_check = time.monotonic()
                             paths = [Path(p) for p in json.loads(env['CLOUD_DISK_GUARD_PATHS'])]
@@ -230,7 +236,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
                           compression_map='layer_map_llama_paper.json', second_moment_normalization=True,
                           compression_rule='Q_K_dim1_V_O_up_gate_down_dim0_embedding_head_dim1_norm_full')
-        if MODE == 'matched' and opt not in ('softmuon', 'soft_lion_muon'):
+        if MODE == 'matched' and opt not in ('softmuon', 'soft_lion_muon', 'anvil2'):
             result.update(update_rms=0.2, row_normalization=opt == 'normuon_matched',
                           ns_kernel='official_quintic_3.4445_-4.7750_2.0315',
                           auxiliary_lr=0.001, auxiliary_weight_decay=0.0,
@@ -249,6 +255,15 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           checkpoint_saving=False, physical_world_size=TRAIN_WORLD,
                           global_batch_size=128, microbatch_per_gpu=32 // TRAIN_WORLD,
                           accumulation_per_gpu=4, seed=0, data_seed=1337,
+                          wandb_mode=env['WANDB_MODE'])
+        if opt == 'anvil2':
+            result.update(algorithm='ANVIL_II', auxiliary_lr=float(lr),
+                          auxiliary_weight_decay=float(weight_decay),
+                          adamw_betas=[0.9, 0.95], adamw_eps=1e-8,
+                          auxiliary_update_every=1, cautious_weight_decay=True,
+                          engage_fraction=0.5, engage_step=math.ceil(target * 0.5),
+                          ns_steps=6, checkpoint_saving=False, physical_world_size=TRAIN_WORLD,
+                          global_batch_size=128, seed=0, data_seed=1337,
                           wandb_mode=env['WANDB_MODE'])
         if opt == 'soft_lion_muon':
             result.update(algorithm='SoftLionMuon', period=5, lion_lr_ratio=0.01,

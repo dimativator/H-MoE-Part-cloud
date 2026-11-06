@@ -178,6 +178,11 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             adamw_lr_scale=args.muon_adamw_lr_scale,
             dampening=args.dampening
         )
+    elif optimizer_name == "anvil2":
+        from .anvil2 import build_anvil2
+        if model is None:
+            raise ValueError("ANVIL II requires named model parameters to identify head/embeddings.")
+        optimizer = build_anvil2(param_groups, args, named_parameters=dict(model.named_parameters()))
     elif optimizer_name == "mnd_muon":
         from .mnd_muon import build_mnd_muon
         optimizer = build_mnd_muon(param_groups, args)

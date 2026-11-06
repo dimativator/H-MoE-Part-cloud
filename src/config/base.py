@@ -153,7 +153,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "soft_lion_muon", "muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "slim_normuon_lion", "mnd_muon",
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite", "softmuon", "soft_lion_muon", "anvil2", "muon2", "normuon", "slim_normuon", "muon_matched", "normuon_matched", "slim_normuon_matched", "slim_normuon_lion", "mnd_muon",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
@@ -187,6 +187,10 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--soft-lion-muon-ns-steps", default=6, type=int)
     parser.add_argument("--soft-lion-muon-soft-ns-steps", default=30, type=int)
     parser.add_argument("--soft-lion-muon-aux-lr", default=0.001, type=float)
+    parser.add_argument("--anvil2-engage-fraction", default=0.5, type=float,
+        help="Fraction of total optimizer steps completed before blending slow momentum.")
+    parser.add_argument("--anvil2-momentum-warmup-steps", default=240, type=int)
+    parser.add_argument("--anvil2-momentum-cooldown-steps", default=50, type=int)
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging
