@@ -261,6 +261,42 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--mlp-dim-exp-factor", default=1.0, type=float)
 
+    # ── Activation memory: recomputation and CPU offload (Llama) ────────────
+    parser.add_argument(
+        "--activation-checkpointing",
+        default="none",
+        choices=["none", "mlp", "full"],
+        help="Recompute activations in backward during training. 'full' checkpoints "
+        "every block (only block inputs are kept); 'mlp' recomputes norm 2, SwiGLU "
+        "and the residual add of every block.",
+    )
+    parser.add_argument(
+        "--activation-offload",
+        action="store_true",
+        help="Keep tensors saved for backward in CPU memory during training "
+        "(torch.autograd.graph.save_on_cpu). Copies are synchronous, so step time "
+        "is pessimistic. With --activation-checkpointing, checkpointed block inputs "
+        "stay on the GPU.",
+    )
+
+    # ── Memory profiling ────────────────────────────────────────────────────
+    parser.add_argument(
+        "--mem-profile",
+        default=None,
+        type=str,
+        help="Write per-step, per-phase CUDA memory (JSON) to this path and exit "
+        "after --mem-profile-steps steps. While set, peak_mem in the train log "
+        "covers only the optimizer step onward; use the JSON.",
+    )
+    parser.add_argument("--mem-profile-steps", default=3, type=int)
+    parser.add_argument(
+        "--mem-snapshot",
+        default=None,
+        type=str,
+        help="With --mem-profile, dump a torch.cuda.memory snapshot of the last "
+        "profiled step to this pickle (view at https://pytorch.org/memory_viz).",
+    )
+
     # ── FP8 training (COAT) ─────────────────────────────────────────────────
     parser.add_argument(
         "--fp8",

@@ -412,6 +412,16 @@ def train(
         _mem_after_step_bwd  = []
         _mem_after_batch     = []
 
+    # --mem-profile: per-phase peak memory, written to JSON; exits after N steps.
+    _mem_prof = None
+    if getattr(cfg, "mem_profile", None):
+        from .mem_profile import MemProfiler
+        _mem_prof = MemProfiler(
+            cfg, model, opt,
+            rank=getattr(distributed_backend, "rank", 0),
+            world_size=distributed_backend.get_world_size(),
+        )
+
     _time_bench = os.environ.get("TIME_BENCH", "false") in ["1", "True", "true"]
     if _time_bench:
         _t_data = []
@@ -558,6 +568,8 @@ def train(
         t_start = time.perf_counter_ns()
         if "cuda" in cfg.device:
             torch.cuda.reset_peak_memory_stats()
+        if _mem_prof is not None:
+            _mem_prof.step_begin(curr_iter)
 
         # FP8 weight-cache management: recompute FP8 weight scales on the first
         # microbatch of every optimizer step; reuse cached scales for the rest.
@@ -596,6 +608,8 @@ def train(
                 if distributed_backend.is_master_process():
                     memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
                     _mem_before_step_fwd.append(memory_usage)
+            if _mem_prof is not None:
+                _mem_prof.before_forward(microstep_idx)
             with type_ctx:
                 with distributed_backend.get_context_for_microstep_forward(
                     model=model,
@@ -603,6 +617,8 @@ def train(
                     gradient_accumulation_steps=cfg.acc_steps,
                 ):
                     outputs = model(x, targets=y)
+            if _mem_prof is not None:
+                _mem_prof.after_forward(microstep_idx)
 
             if _time_bench:
                 torch.cuda.synchronize()
@@ -654,7 +670,11 @@ def train(
         if _time_bench:
             torch.cuda.synchronize()
             _tb4 = time.perf_counter_ns()
+        if _mem_prof is not None:
+            _mem_prof.before_opt_step()
         opt.step()
+        if _mem_prof is not None:
+            _mem_prof.after_opt_step()
         if debug_dtypes and curr_iter == 1:
             print_gradient_dtypes(model, distributed_backend)
             print_optimizer_dtypes(opt, distributed_backend)
@@ -673,6 +693,8 @@ def train(
         if cfg.exponential_moving_average:
             ema.step(not_compiled_model, distributed_backend.is_master_process())
         dt = (time.perf_counter_ns() - t_start) / 1e9
+        if _mem_prof is not None and _mem_prof.step_end():
+            sys.exit(0)
 
         if _time_bench:
             _t_data.append(_iter_t_data / 1e6)

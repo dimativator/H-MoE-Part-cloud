@@ -1,11 +1,13 @@
 import math
 import sys
 import os
+from contextlib import nullcontext
 
 import tiktoken
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from models.base import GPTBase
 
@@ -100,6 +102,8 @@ class LlamaBlock(nn.Module):
         self.dropout  = config.dropout
         self.qkv_clipping = getattr(config, "qkv_clipping", False)
         self.qkv_clipping_factor = getattr(config, "qkv_clipping_factor", 1.0)
+        # --activation-checkpointing mlp: recompute norm 2 + SwiGLU + residual.
+        self.ac_mlp = getattr(config, "activation_checkpointing", "none") == "mlp"
 
         # Canonical construction order — identical across BF16 and FP8:
         self.ln_1 = RMSNorm(config.n_embd, eps=config.rmsnorm_eps)
@@ -157,9 +161,13 @@ class LlamaBlock(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         x = x + self.attn.o_proj(y)
 
+        if self.ac_mlp and self.training and torch.is_grad_enabled():
+            return checkpoint(self._mlp_residual, x, use_reentrant=False)
+        return self._mlp_residual(x)
+
+    def _mlp_residual(self, x):
         h = self.ln_2(x)
-        x = x + self.mlp.down_proj(F.silu(self.mlp.gate_proj(h)) * self.mlp.up_proj(h))
-        return x
+        return x + self.mlp.down_proj(F.silu(self.mlp.gate_proj(h)) * self.mlp.up_proj(h))
 
     def _fp8_forward(self, x, Qx, Sx, freqs_cis):
         from third_party.coat.utils._fp8manager import FP8Manager
@@ -217,7 +225,7 @@ class LlamaBlock(nn.Module):
             gs, self.fwobits, self.qargs,
         )
 
-        hidden, Qx, Sx = FP8MLPResidual.apply(
+        mlp_args = (
             hidden, Qx, Sx,
             self.mlp.gate_proj.weight, None, None, w_g_s,
             self.mlp.up_proj.weight,   None, None, w_u_s,
@@ -225,6 +233,10 @@ class LlamaBlock(nn.Module):
             self.ln_2.weight,
             gs, self.fwobits, self.qargs,
         )
+        if self.ac_mlp and torch.is_grad_enabled():
+            hidden, Qx, Sx = checkpoint(FP8MLPResidual.apply, *mlp_args, use_reentrant=False)
+        else:
+            hidden, Qx, Sx = FP8MLPResidual.apply(*mlp_args)
 
         return hidden, Qx, Sx
 
@@ -249,6 +261,8 @@ class Llama(GPTBase):
             )
         self.qargs = qargs
         self._tokenizer = None
+        self.ac_full = getattr(config, "activation_checkpointing", "none") == "full"
+        self.activation_offload = bool(getattr(config, "activation_offload", False))
 
         self.head_dim  = config.n_embd // config.n_head
         self.freqs_cis = precompute_freqs_cis(self.head_dim, config.sequence_length)
@@ -301,30 +315,40 @@ class Llama(GPTBase):
         )
         pos = torch.arange(0, t, dtype=torch.long, device=device)
 
-        x = self.transformer.drop(self.transformer.wte(idx))
-        freqs_cis = self.freqs_cis.to(x.device)[pos]
+        training = self.training and torch.is_grad_enabled()
+        offload = (
+            torch.autograd.graph.save_on_cpu(pin_memory=torch.cuda.is_available())
+            if self.activation_offload and training
+            else nullcontext()
+        )
+        with offload:
+            x = self.transformer.drop(self.transformer.wte(idx))
+            freqs_cis = self.freqs_cis.to(x.device)[pos]
 
-        if self.fp8:
-            x, Qx, Sx = self.quantize_input(x)
-        else:
-            Qx, Sx = None, None
+            if self.fp8:
+                x, Qx, Sx = self.quantize_input(x)
+            else:
+                Qx, Sx = None, None
 
-        for block in self.transformer.h:
-            x, Qx, Sx = block(x, Qx, Sx, freqs_cis)
+            for block in self.transformer.h:
+                if self.ac_full and training:
+                    x, Qx, Sx = checkpoint(block, x, Qx, Sx, freqs_cis, use_reentrant=False)
+                else:
+                    x, Qx, Sx = block(x, Qx, Sx, freqs_cis)
 
-        if self.fp8:
-            x = self.quantize_output(x, Qx, Sx)
+            if self.fp8:
+                x = self.quantize_output(x, Qx, Sx)
 
-        x = self.transformer.ln_f(x)
+            x = self.transformer.ln_f(x)
 
-        if targets is not None:
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1
-            )
-        else:
-            logits = self.lm_head(x[:, [-1], :])
-            loss = None
+            if targets is not None:
+                logits = self.lm_head(x)
+                loss = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1
+                )
+            else:
+                logits = self.lm_head(x[:, [-1], :])
+                loss = None
 
         return {
             "logits": logits if get_logits else None,
