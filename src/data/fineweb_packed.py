@@ -13,6 +13,7 @@ from .fineweb import FineWebValReader
 from .fineweb_replay import (
     FineWebReplayTrainReader,
     FineWebSerialReplayTrainReader,
+    PermutedPackedFineWebTrainReader,
     blocks_sha256,
 )
 
@@ -344,6 +345,12 @@ def build_packed_fineweb_readers(args, *, rank: int, world_size: int):
             world_size=world_size,
             batch_size=args.batch_size,
             sequence_length=args.sequence_length,
+        )
+    if getattr(args, "fineweb_packed_shuffle_steps", False):
+        if not args.no_local_save or replay_layout != "concat":
+            raise ValueError("Packed step shuffle requires concat layout and --no-local-save")
+        train_reader = PermutedPackedFineWebTrainReader(
+            train_reader, steps=args.iterations * args.acc_steps, seed=args.data_seed
         )
     validation_metadata = metadata["validation"]
     validation_path = root / str(validation_metadata["file"])

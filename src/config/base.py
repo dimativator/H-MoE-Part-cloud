@@ -226,6 +226,11 @@ def parse_args(base_parser, args, namespace):
             "batches round-robin while preserving --batch-size."
         ),
     )
+    parser.add_argument(
+        "--fineweb-packed-shuffle-steps",
+        action="store_true",
+        help="Permute a fixed prefix of packed microsteps with --data-seed. Requires --no-local-save.",
+    )
     parser.add_argument("--eval-cache-dir", type=str, default=None,
         help="Directory for eval caches (e.g. wikitext103 tokenized data). "
              "Defaults to --datasets-dir if not set.")

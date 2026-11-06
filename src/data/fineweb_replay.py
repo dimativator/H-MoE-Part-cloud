@@ -116,6 +116,49 @@ class FineWebReplayTrainReader:
         self.step = int(state["step"])
 
 
+class PermutedPackedFineWebTrainReader:
+    """Permute paired source-rank microsteps without copying packed tokens."""
+
+    requires_checkpoint_state = False
+
+    def __init__(self, reader: Any, *, steps: int, seed: int):
+        sources = getattr(reader, "readers", [reader])
+        if steps <= 0 or any(source._num_steps < steps for source in sources):
+            raise ValueError("Packed FineWeb permutation exceeds the fixed training prefix")
+        self.reader = reader
+        self.batch_size = reader.batch_size
+        self.sequence_length = reader.sequence_length
+        self.order = np.random.default_rng(seed).permutation(steps)
+        self.step = 0
+        digest = hashlib.sha256(self.order.astype("<u4").tobytes()).hexdigest()
+        print(
+            f"FINEWEB_PACKED_STEP_PERMUTATION seed={seed} steps={steps} "
+            f"sha256={digest} index_bytes={self.order.nbytes}",
+            flush=True,
+        )
+
+    def set_step(self, step: int) -> None:
+        if step < 0 or step > len(self.order):
+            raise ValueError("Permuted packed FineWeb step is out of range")
+        self.step = step
+
+    def sample_batch(self):
+        if self.step >= len(self.order):
+            raise RuntimeError("Permuted packed FineWeb train reader exhausted")
+        source_step = int(self.order[self.step])
+        self.reader.set_step(source_step)
+        x, y = self.reader.sample_batch()
+        if self.step < int(os.environ.get("FINEWEB_BATCH_HASH_STEPS", "0")):
+            digest = blocks_sha256(_blocks_from_xy(x, y))
+            print(
+                f"FINEWEB_PERMUTED_BATCH_SHA256 rank={getattr(self.reader, 'rank', 0)} "
+                f"microstep={self.step} source_step={source_step} sha256={digest}",
+                flush=True,
+            )
+        self.step += 1
+        return x, y
+
+
 class FineWebSerialReplayTrainReader:
     """Replay source ranks round-robin while preserving the run batch size."""
 
