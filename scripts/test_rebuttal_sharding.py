@@ -13,7 +13,18 @@ torch.manual_seed(123)
 parameters = [torch.nn.Parameter(torch.randn(7, 5)), torch.nn.Parameter(torch.randn(3, 4)),
               torch.nn.Parameter(torch.randn(8))]
 reference = [torch.nn.Parameter(p.detach().clone()) for p in parameters]
-sharded = torch.optim.AdamW(parameters, lr=0.01)
+class EagerAdamW(torch.optim.AdamW):
+    def step(self, closure=None):
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if not self.state[parameter]:
+                    self.state[parameter].update(
+                        step=torch.tensor(0.0), exp_avg=torch.zeros_like(parameter),
+                        exp_avg_sq=torch.zeros_like(parameter))
+        return super().step(closure)
+
+
+sharded = EagerAdamW(parameters, lr=0.01)
 baseline = torch.optim.AdamW(reference, lr=0.01)
 install_state_sharding(SimpleNamespace(optimizer=sharded))
 for step in range(5):
