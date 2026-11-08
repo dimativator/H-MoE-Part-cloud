@@ -20,10 +20,11 @@ def blocks(snapshot):
 def evidence(live):
     grouped = collections.Counter()
     for size, frames in live.values():
-        stack = ' | '.join(f"{f.get('filename', '')}:{f.get('line', '')}:{f.get('name', '')}"
-                           for f in frames if f.get('filename', '').endswith('.py'))
+        python_frames = [f for f in frames if f.get('filename', '').endswith('.py')][:8]
+        stack = ' | '.join(f"{Path(f.get('filename', '')).name}:{f.get('line', '')}:{f.get('name', '')}"
+                           for f in python_frames)
         grouped[stack or 'unattributed (no Python stack)'] += size
-    return [dict(bytes=size, stack=stack) for stack, size in grouped.most_common(15)]
+    return [dict(bytes=size, stack=stack) for stack, size in grouped.most_common(8)]
 
 
 def summarize(path):
