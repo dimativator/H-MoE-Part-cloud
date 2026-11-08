@@ -1,4 +1,4 @@
-"""Isolated Megatron B1/B2/B4 trials, logs only, at most eight GPUs."""
+"""Isolated Megatron B1/B2/B4 trials, logs only, at most four GPUs."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -50,7 +50,7 @@ def grid(suite: str) -> list[dict]:
                                offload=False, mb=mb, dp=1, steps=50, trace=True, fused=True))
     if suite in ("all", "b4"):
         for method, dp, ac, mb in itertools.product(
-                ("muon", "adam", "frugal", "slim_adam"), (1, 2, 4, 8),
+                ("muon", "adam", "frugal", "slim_adam"), (1, 2, 4),
                 ("none", "full"), (1, 32)):
             trials.append(dict(suite="b4", method=method,
                                states="fp8" if method in ("muon", "adam") else "fp32",
@@ -185,7 +185,7 @@ def run_trial(trial: dict, output: Path, devices: list[str]) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", choices=("smoke", "all", "b1", "b2", "b4"), default="smoke")
-    parser.add_argument("--gpus", type=int, choices=range(1, 9), default=1)
+    parser.add_argument("--gpus", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--output", type=Path, default=Path("/home/jovyan/rebuttal-memory-20261108"))
     parser.add_argument("--plan", action="store_true")
     args = parser.parse_args()
@@ -194,7 +194,7 @@ def main() -> None:
         print(json.dumps([dict(trial=t, command=command(t)) for t in trials], indent=2))
         return
     if max(t["dp"] for t in trials) > args.gpus:
-        parser.error("The selected suite requires eight GPUs")
+        parser.error("The selected suite requires four GPUs")
     args.output.mkdir(parents=True, exist_ok=True)
     guard(args.output, 500_000_000)
     threading.Thread(target=watchdog, args=(args.output,), daemon=True).start()

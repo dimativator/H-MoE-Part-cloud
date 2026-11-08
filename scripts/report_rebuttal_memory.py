@@ -104,11 +104,11 @@ def loss_checks(records: list[dict]) -> list[dict]:
 
 def distributed_table(rows: list[dict], ac: str, mb: int) -> str:
     lines = [r"\begin{table}[!htb]", r"\centering\small",
-             r"\begin{tabular}{l|rrrr}", r"\toprule",
-             r"Data-parallel size & 1 & 2 & 4 & 8 \\", r"\midrule"]
+             r"\begin{tabular}{l|rrr}", r"\toprule",
+             r"Data-parallel size & 1 & 2 & 4 \\", r"\midrule"]
     for method in ("adam", "muon", "frugal", "slim_adam"):
         cells = []
-        for dp in (1, 2, 4, 8):
+        for dp in (1, 2, 4):
             selected = [r for r in rows if r["suite"] == "b4" and r["method"] == method
                         and r["dp"] == dp and r["mb"] == mb and r["ac"] == ac]
             cells.append(f"{max(r['peak_gb'] for r in selected):.2f}"
