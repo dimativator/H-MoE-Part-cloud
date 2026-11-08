@@ -150,7 +150,9 @@ def main() -> None:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
-    records = [json.loads(p.read_text()) for p in args.input.glob("*/result.json")]
+    records = [json.loads(p.read_text()) for p in args.input.rglob("result.json")
+               if "validation" not in p.relative_to(args.input).parts]
+    records = [r for r in records if r["trial"]["suite"] in ("b1", "b2", "b4")]
     rows = [row for record in records for row in summarize(record)]
     args.output.mkdir(parents=True, exist_ok=True)
     fields = sorted({key for row in rows for key in row})
