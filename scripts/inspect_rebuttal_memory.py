@@ -47,3 +47,6 @@ if compact:
     for offset in range(0, len(payload), 12000):
         print("COMPACT_EXPORT=" + json.dumps(dict(offset=offset, total=len(payload),
               data=payload[offset:offset + 12000])), flush=True)
+if os.environ.get("REBUTTAL_ALLOCATOR_SUMMARY") == "1":
+    from summarize_rebuttal_allocator import inspect
+    inspect(root)
