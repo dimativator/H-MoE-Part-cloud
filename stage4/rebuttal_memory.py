@@ -95,13 +95,19 @@ def install_state_sharding(optimizer) -> None:
 
         def step(*args, _raw=raw, _params=parameters, _original=original, **kwargs):
             hidden = []
+            groups = [(group, group["params"]) for group in _raw.param_groups]
             for parameter in _params:
                 if owners[id(parameter)] != rank:
                     hidden.append((parameter, parameter.grad))
                     parameter.grad = None
+                    _raw.state.pop(parameter, None)
+            for group, params in groups:
+                group["params"] = [p for p in params if owners[id(p)] == rank]
             try:
                 result = _original(*args, **kwargs)
             finally:
+                for group, params in groups:
+                    group["params"] = params
                 for parameter, grad in hidden:
                     parameter.grad = grad
             for parameter in _params:
