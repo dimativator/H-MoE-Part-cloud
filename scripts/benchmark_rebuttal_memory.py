@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import itertools
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -43,7 +44,7 @@ def grid(suite: str) -> list[dict]:
         for method, mb in itertools.product(("muon", "adam", "frugal", "slim_adam", "galore"), (1, 32)):
             trials.append(dict(suite="b2", method=method, states="fp8" if method in ("muon", "adam") else "fp32",
                                ac="none", offload=False, mb=mb, dp=1,
-                               steps=15, trace=True, fused=False))
+                               steps=50 if method == "muon" else 15, trace=True, fused=False))
         for mb in (1, 32):
             trials.append(dict(suite="b2", method="muon", states="fp8", ac="none",
                                offload=False, mb=mb, dp=1, steps=50, trace=True, fused=True))
@@ -161,8 +162,10 @@ def run_trial(trial: dict, output: Path, devices: list[str]) -> dict:
             except json.JSONDecodeError:
                 pass
     steps = [event for event in events if event["event"] == "step"]
-    complete = code == 0 and all(sum(s["rank"] == rank for s in steps) == trial["steps"]
+    complete = (code == 0 and all(sum(s["rank"] == rank for s in steps) == trial["steps"]
                                  for rank in range(trial["dp"]))
+                and all(not s["skipped_iteration"] and
+                        all(math.isfinite(v) for v in s["losses"].values()) for s in steps))
     status = "success" if complete else "oom" if "out of memory" in text.lower() else "failed"
     result = dict(trial=trial, status=status, return_code=code, log=str(log_path),
                   events=events, timestamp=time.time())

@@ -189,6 +189,8 @@ def install(precision: str) -> None:
         allocated, reserved = torch.cuda.memory_allocated(), torch.cuda.memory_reserved()
         details = inventory(state["model"], state["optimizer"])
         emit("step", step=step, step_ms=elapsed, optimizer_ms=state["optimizer_ms"],
+             losses={name: float(value) for name, value in result[0].items()},
+             skipped_iteration=int(result[1]),
              peak_allocated_bytes=max(state["forward_backward_peak"], state["optimizer_peak"]),
              forward_backward_peak_bytes=state["forward_backward_peak"],
              optimizer_peak_bytes=state["optimizer_peak"],
