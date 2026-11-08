@@ -161,6 +161,9 @@ def install(precision: str) -> None:
             torch.cuda.synchronize()
             state["forward_backward_peak"] = torch.cuda.max_memory_allocated()
             state["before_optimizer"] = torch.cuda.memory_allocated()
+            if state.get("trace"):
+                state["before_optimizer_inventory"] = inventory(model, optimizer)
+                state["before_optimizer_snapshot"] = torch.cuda.memory._snapshot()
             torch.cuda.reset_peak_memory_stats()
             start = time.perf_counter()
             result = original_step(*args, **kwargs)
@@ -183,7 +186,10 @@ def install(precision: str) -> None:
         state["step"] += 1
         step = state["step"]
         trace = os.environ.get("REBUTTAL_TRACE") == "1" and step in (1, 6, 11)
+        state["trace"] = trace
         if trace:
+            state["initial_inventory"] = inventory(state["model"], state["optimizer"])
+            state["initial_snapshot"] = torch.cuda.memory._snapshot()
             torch.cuda.memory._record_memory_history(max_entries=100000)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
@@ -208,7 +214,11 @@ def install(precision: str) -> None:
             snapshot = torch.cuda.memory._snapshot()
             torch.cuda.memory._record_memory_history(enabled=None)
             with gzip.open(path, "wt") as handle:
-                json.dump(dict(snapshot=snapshot, inventory=details, step=step), handle)
+                json.dump(dict(snapshot=snapshot, inventory=details, step=step,
+                               initial_snapshot=state.pop("initial_snapshot"),
+                               initial_inventory=state.pop("initial_inventory"),
+                               before_optimizer_snapshot=state.pop("before_optimizer_snapshot"),
+                               before_optimizer_inventory=state.pop("before_optimizer_inventory")), handle)
             emit("allocator_log", path=str(path))
         return result
 

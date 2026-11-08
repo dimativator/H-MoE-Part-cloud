@@ -99,6 +99,49 @@ def loss_checks(records: list[dict]) -> list[dict]:
     return checks
 
 
+def distributed_table(rows: list[dict], ac: str, mb: int) -> str:
+    lines = [r"\begin{table}[!htb]", r"\centering\small",
+             r"\begin{tabular}{l|rrrr}", r"\toprule",
+             r"Data-parallel size & 1 & 2 & 4 & 8 \\", r"\midrule"]
+    for method in ("adam", "muon", "frugal", "slim_adam"):
+        cells = []
+        for dp in (1, 2, 4, 8):
+            selected = [r for r in rows if r["suite"] == "b4" and r["method"] == method
+                        and r["dp"] == dp and r["mb"] == mb and r["ac"] == ac]
+            cells.append(f"{max(r['peak_gb'] for r in selected):.2f}"
+                         if len(selected) == dp and all(r["status"] == "success" for r in selected)
+                         else "NR")
+        lines.append(NAMES[method] + " & " + " & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}",
+              r"\caption{Maximum per-rank peak allocated memory (GB) under whole-parameter "
+              + "optimizer-state sharding. Model weights, gradients, and FP32 master weights remain replicated. "
+              + f"The per-rank microbatch is {mb} with {ac} activation checkpointing. "
+              + "AdamW and Muon use FP8 states. FRUGAL and SlimAdam use FP32 states. "
+              + "The global batch equals the per-rank microbatch times the data-parallel size.}",
+              r"\end{table}"]
+    return "\n".join(lines) + "\n"
+
+
+def breakdown_table(rows: list[dict], mb: int) -> str:
+    lines = [r"\begin{table}[!htb]", r"\centering\scriptsize",
+             r"\begin{tabular}{l|rrrrrrr}", r"\toprule",
+             r"Optimizer & Model & Master & Grads & State & Fwd/bwd peak & Opt. peak & Peak \\", r"\midrule"]
+    for r in rows:
+        if r["suite"] != "b2" or r["mb"] != mb:
+            continue
+        name = NAMES[r["method"]] + (" (fused fallback)" if r["fused"] else "")
+        fields = ("model_gb", "master_gb", "grads_gb", "optimizer_state_gb",
+                  "forward_backward_peak_gb", "optimizer_peak_gb", "peak_gb")
+        cells = [f"{r[k]:.2f}" if k in r and r["status"] == "success" else "NR" for k in fields]
+        lines.append(name + " & " + " & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}",
+              r"\caption{Memory components and phase peaks (GB) for the 500M Megatron model at microbatch "
+              + str(mb) + ". Persistent storage is measured after step 15. Phase peaks include all live allocations "
+              + "and must not be added together. Allocator traces provide allocation-site diagnostics.}",
+              r"\end{table}"]
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
@@ -118,6 +161,10 @@ def main() -> None:
             for regime in ("mixed", "fp8"):
                 name = f"b1_{ac}_offload{int(offload)}_{regime}.tex"
                 (args.output / name).write_text(table(rows, ac, offload, regime))
+    for mb in (1, 32):
+        (args.output / f"b2_breakdown_mb{mb}.tex").write_text(breakdown_table(rows, mb))
+        for ac in ("none", "full"):
+            (args.output / f"b4_{ac}_mb{mb}.tex").write_text(distributed_table(rows, ac, mb))
     (args.output / "coverage.json").write_text(json.dumps(dict(
         trials=len(records), successful=sum(r["status"] == "success" for r in records),
         oom=sum(r["status"] == "oom" for r in records),
