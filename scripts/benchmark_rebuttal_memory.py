@@ -89,6 +89,9 @@ def guard(output: Path, extra_bytes: int = 0) -> None:
               and ("error" in r or r["available_bytes"] <= 5_000_000_000 + extra_bytes)]
     record.update(status="stop" if failed else "ok", expected_write_bytes=extra_bytes)
     print("REBUTTAL_STORAGE=" + json.dumps(record), flush=True)
+    if not failed:
+        with LOCK, (output / "disk_guard.jsonl").open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
     if failed:
         STOP.set()
         with LOCK:

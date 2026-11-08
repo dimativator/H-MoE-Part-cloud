@@ -7,6 +7,12 @@ from rebuttal_storage_preflight import snapshot
 
 root = Path(os.environ.get("REBUTTAL_INSPECT_ROOT", "/home/jovyan/rebuttal-memory-20261108"))
 print("REBUTTAL_STORAGE=" + json.dumps(snapshot()), flush=True)
+for path in sorted(root.glob("**/disk_guard.jsonl")):
+    with path.open("rb") as handle:
+        handle.seek(max(0, path.stat().st_size - 10000))
+        lines = handle.read().decode(errors="replace").splitlines()
+    if lines:
+        print("WORKER_GUARD=" + lines[-1], flush=True)
 for path in sorted(root.glob("**/result.json")):
     result = json.loads(path.read_text())
     steps = [e for e in result["events"] if e["event"] == "step"]
