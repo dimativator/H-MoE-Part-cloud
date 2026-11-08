@@ -41,11 +41,16 @@ def tensors(value, seen=None):
 
 def storage_inventory(values) -> dict:
     records = {}
+    dtypes = {}
     for tensor in tensors(values):
         if tensor.is_cuda:
             storage = tensor.untyped_storage()
             records[storage.data_ptr()] = storage.nbytes()
-    return dict(bytes=sum(records.values()), storages=records)
+            dtypes[storage.data_ptr()] = str(tensor.dtype)
+    dtype_bytes = {}
+    for pointer, size in records.items():
+        dtype_bytes[dtypes[pointer]] = dtype_bytes.get(dtypes[pointer], 0) + size
+    return dict(bytes=sum(records.values()), storages=records, dtype_bytes=dtype_bytes)
 
 
 def leaves(optimizer):
@@ -176,6 +181,10 @@ def install(precision: str) -> None:
         state.update(model=model, optimizer=optimizer)
         emit("setup", checkpoint_saving=False, ac=ac,
              offload=os.environ.get("REBUTTAL_OFFLOAD") == "1",
+             optimizer_classes=[type(raw).__name__ for _, raw in leaves(optimizer)],
+             gpu_name=torch.cuda.get_device_name(), torch_version=torch.__version__,
+             grad_dtypes=sorted({str(p.main_grad.dtype) for chunk in model
+                                 for p in chunk.parameters() if hasattr(p, "main_grad")}),
              inventory=inventory(model, optimizer))
         return model, optimizer, scheduler
 
