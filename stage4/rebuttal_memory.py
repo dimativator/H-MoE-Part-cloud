@@ -127,8 +127,10 @@ def install(precision: str) -> None:
             entry = _EMERGING_OPTIMIZERS[name]
             entry.optimizer_cls = make_fp8_adamw(entry.optimizer_cls)
         if os.environ.get("REBUTTAL_FUSED_FALLBACK") == "1":
-            # Use the same fused update for AdamW and the Muon fallback.
-            mcore_optimizer.Adam = make_fused_fp8_adamw(mcore_optimizer.Adam)
+            # Unwrap the existing FP8 mixin before constructing the fused variant.
+            # This alternate kernel uses per-tensor max-abs quantization, unlike
+            # the baseline's groupwise expansion. It needs its own loss check.
+            mcore_optimizer.Adam = make_fused_fp8_adamw(mcore_optimizer.Adam.__bases__[-1])
 
     ac = os.environ.get("REBUTTAL_AC", "none")
     if ac == "selective":
@@ -182,6 +184,7 @@ def install(precision: str) -> None:
         emit("setup", checkpoint_saving=False, ac=ac,
              offload=os.environ.get("REBUTTAL_OFFLOAD") == "1",
              optimizer_classes=[type(raw).__name__ for _, raw in leaves(optimizer)],
+             fused_fallback_changes_quantizer=os.environ.get("REBUTTAL_FUSED_FALLBACK") == "1",
              gpu_name=torch.cuda.get_device_name(), torch_version=torch.__version__,
              grad_dtypes=sorted({str(p.main_grad.dtype) for chunk in model
                                  for p in chunk.parameters() if hasattr(p, "main_grad")}),
