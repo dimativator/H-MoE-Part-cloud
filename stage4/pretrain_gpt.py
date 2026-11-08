@@ -133,7 +133,10 @@ def _state_sharded_muon_config_to_kwargs(config, model_chunks, pg_collection):
     kwargs = mcore_eopt._muon_config_to_kwargs(config, model_chunks, pg_collection)
     kwargs.update(
         {
-            "state_precision": "fp8" if precision == "fp8" else "bfloat16",
+            "state_precision": (
+                "fp8" if precision == "fp8" else
+                "fp32" if os.getenv("REBUTTAL_MEMORY") == "1" else "bfloat16"
+            ),
             "distributed_state_sharding": config.muon_distributed_state_sharding,
             "profile_state_communication": config.muon_profile_state_communication,
             "fp8_bucket_bytes": config.muon_fp8_bucket_bytes,
@@ -328,5 +331,9 @@ if os.getenv("STAGE4_REPORT_PEAK_MEMORY") == "1":
         )
 
     atexit.register(report_peak_memory)
+
+if os.getenv("REBUTTAL_MEMORY") == "1":
+    from stage4.rebuttal_memory import install
+    install(precision)
 
 runpy.run_path(str(MCORE_ROOT / "pretrain_gpt.py"), run_name="__main__")

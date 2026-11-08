@@ -82,7 +82,7 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
         tp_mode: Literal["blockwise", "duplicated", "distributed"] = "duplicated",
         use_syrk: bool = False,
         batched_newton_schulz: bool = False,
-        state_precision: Literal["bfloat16", "fp8"] = "bfloat16",
+        state_precision: Literal["bfloat16", "fp32", "fp8"] = "bfloat16",
         distributed_state_sharding: bool = True,
         profile_state_communication: bool = False,
         fp8_bucket_bytes: int = 0,
@@ -92,8 +92,10 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
         frugal_coord_choice: str = "columns",
         frugal_inactive_lr_scale: float = 1.0,
     ) -> None:
-        if state_precision not in {"bfloat16", "fp8"}:
-            raise ValueError("state_precision must be 'bfloat16' or 'fp8'")
+        if state_precision not in {"bfloat16", "fp32", "fp8"}:
+            raise ValueError("state_precision must be 'bfloat16', 'fp32' or 'fp8'")
+        if state_precision == "fp32" and distributed_state_sharding:
+            raise ValueError("FP32 momentum requires replicated or whole-parameter state sharding")
         if batched_newton_schulz:
             raise ValueError(
                 "batched Newton-Schulz is not compatible with per-tensor DP state gathers"
@@ -205,7 +207,8 @@ class StateShardedMuon(FP8StateDictMixin, TensorParallelMuon):
                 state, "momentum_buffer", reference, group_size=self.group_size
             )
         else:
-            state["momentum_buffer"] = torch.zeros_like(reference, dtype=torch.bfloat16)
+            dtype = torch.float32 if self.state_precision == "fp32" else torch.bfloat16
+            state["momentum_buffer"] = torch.zeros_like(reference, dtype=dtype)
 
     @torch.no_grad()
     def _init_group(self, group: dict, skip_non_grad_params: bool = True) -> None:
