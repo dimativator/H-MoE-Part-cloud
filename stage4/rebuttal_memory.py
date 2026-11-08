@@ -181,7 +181,9 @@ def install(precision: str) -> None:
 
         optimizer.step = optimizer_step
         state.update(model=model, optimizer=optimizer)
+        torch.cuda.synchronize()
         emit("setup", checkpoint_saving=False, ac=ac,
+             setup_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
              offload=os.environ.get("REBUTTAL_OFFLOAD") == "1",
              optimizer_classes=[type(raw).__name__ for _, raw in leaves(optimizer)],
              fused_fallback_changes_quantizer=os.environ.get("REBUTTAL_FUSED_FALLBACK") == "1",

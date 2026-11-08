@@ -21,9 +21,12 @@ def summarize(record: dict) -> list[dict]:
         row = dict(**trial, rank=rank, status=record["status"], log=record["log"])
         if window:
             peak = max(window, key=lambda e: e["peak_allocated_bytes"])
+            setup_peak = max((e.get("setup_peak_allocated_bytes", 0) for e in record["events"]
+                              if e["event"] == "setup" and e["rank"] == rank), default=0)
+            peak_bytes = max(peak["peak_allocated_bytes"], setup_peak)
             last = window[-1]
-            row.update(peak_bytes=peak["peak_allocated_bytes"],
-                       peak_gb=peak["peak_allocated_bytes"] / 1e9,
+            row.update(peak_bytes=peak_bytes, peak_gb=peak_bytes / 1e9,
+                       setup_peak_gb=setup_peak / 1e9,
                        forward_backward_peak_gb=max(e["forward_backward_peak_bytes"] for e in window) / 1e9,
                        optimizer_peak_gb=max(e["optimizer_peak_bytes"] for e in window) / 1e9,
                        reserved_minus_allocated_gb=last["reserved_minus_allocated_bytes"] / 1e9,
