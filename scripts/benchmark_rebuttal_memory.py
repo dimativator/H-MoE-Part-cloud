@@ -200,7 +200,9 @@ def main() -> None:
     if args.shard_count != 1 and args.suite != "b1":
         parser.error("Independent shards are supported only for B1")
     trials = grid(args.suite)
-    trials = trials[args.shard_index::args.shard_count]
+    start = len(trials) * args.shard_index // args.shard_count
+    end = len(trials) * (args.shard_index + 1) // args.shard_count
+    trials = trials[start:end]
     if args.plan:
         print(json.dumps([dict(trial=t, command=command(t)) for t in trials], indent=2))
         return
