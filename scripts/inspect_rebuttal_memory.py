@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import os
+import base64
+import gzip
 
 from rebuttal_storage_preflight import snapshot
 
@@ -18,6 +20,12 @@ for path in sorted(root.glob("**/result.json")):
     steps = [e for e in result["events"] if e["event"] == "step"]
     print("RESULT=" + json.dumps(dict(path=str(path), trial=result["trial"],
           status=result["status"], steps=len(steps))), flush=True)
+    if os.environ.get("REBUTTAL_EXPORT_RESULTS") == "1":
+        payload = base64.b64encode(gzip.compress(path.read_bytes())).decode()
+        for offset in range(0, len(payload), 12000):
+            print("RESULT_EXPORT=" + json.dumps(dict(
+                path=str(path.relative_to(root)), offset=offset,
+                total=len(payload), data=payload[offset:offset + 12000])), flush=True)
 for path in sorted(root.glob("**/train.log")):
     if (path.parent / "result.json").exists():
         continue
