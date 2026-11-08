@@ -155,12 +155,9 @@ def run_trial(trial: dict, output: Path, devices: list[str]) -> dict:
             CHILDREN.pop(child.pid, None)
     text = log_path.read_text(errors="replace")
     events = []
-    for line in text.splitlines():
-        if "REBUTTAL=" in line:
-            try:
-                events.append(json.loads(line.split("REBUTTAL=", 1)[1]))
-            except json.JSONDecodeError:
-                pass
+    for rank_log in sorted(run_dir.glob("rank*.jsonl")):
+        for line in rank_log.read_text().splitlines():
+            events.append(json.loads(line))
     steps = [event for event in events if event["event"] == "step"]
     complete = (code == 0 and all(sum(s["rank"] == rank for s in steps) == trial["steps"]
                                  for rank in range(trial["dp"]))

@@ -13,8 +13,13 @@ from torch.utils.checkpoint import checkpoint
 
 
 def emit(event: str, **values) -> None:
-    print("REBUTTAL=" + json.dumps(dict(event=event, rank=dist.get_rank(),
-                                      timestamp=time.time(), **values)), flush=True)
+    record = dict(event=event, rank=dist.get_rank(), timestamp=time.time(), **values)
+    if os.environ.get("REBUTTAL_RUN_DIR"):
+        path = Path(os.environ["REBUTTAL_RUN_DIR"]) / f"rank{dist.get_rank()}.jsonl"
+        with path.open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+    brief = {k: v for k, v in record.items() if k != "inventory"}
+    print("REBUTTAL=" + json.dumps(brief), flush=True)
 
 
 def tensors(value, seen=None):
