@@ -142,7 +142,9 @@ def run_trial(trial: dict, output: Path, devices: list[str]) -> dict:
     env["PYTHONPATH"] = ":".join(str(p) for p in
         (ROOT / "third_party/Megatron-LM", ROOT / "third_party/emerging-optimizers", ROOT))
     cmd = command(trial)
-    (run_dir / "config.json").write_text(json.dumps(dict(trial=trial, command=cmd), indent=2))
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    (run_dir / "config.json").write_text(json.dumps(dict(trial=trial, command=cmd,
+                                                       code_revision=revision), indent=2))
     log_path = run_dir / "train.log"
     print("TRIAL_START=" + json.dumps(dict(trial=trial, devices=devices)), flush=True)
     with log_path.open("w") as log:
@@ -163,8 +165,10 @@ def run_trial(trial: dict, output: Path, devices: list[str]) -> dict:
                                  for rank in range(trial["dp"]))
                 and all(not s["skipped_iteration"] and
                         all(math.isfinite(v) for v in s["losses"].values()) for s in steps))
-    status = "success" if complete else "oom" if "out of memory" in text.lower() else "failed"
-    result = dict(trial=trial, status=status, return_code=code, log=str(log_path),
+    nonfinite = any(not math.isfinite(v) for s in steps for v in s["losses"].values())
+    status = ("success" if complete else "oom" if "out of memory" in text.lower()
+              else "diverged" if nonfinite else "failed")
+    result = dict(trial=trial, status=status, return_code=code, log=str(log_path), code_revision=revision,
                   events=events, timestamp=time.time())
     result_path.write_text(json.dumps(result, indent=2))
     print("TRIAL_END=" + json.dumps(dict(trial=trial, status=status, return_code=code)), flush=True)
@@ -194,17 +198,42 @@ def main() -> None:
     devices = os.environ.get("CUDA_VISIBLE_DEVICES", ",".join(map(str, range(args.gpus)))).split(",")
     if len(devices) < args.gpus:
         raise RuntimeError("Fewer visible GPUs than requested")
-    singles = [t for t in trials if t["suite"] != "b4"]
-    lanes = [singles[i::args.gpus] for i in range(args.gpus)]
-    def lane(index: int):
-        return [run_trial(t, args.output, [devices[index]]) for t in lanes[index]]
-    with ThreadPoolExecutor(max_workers=args.gpus) as pool:
-        results = [r for lane_results in pool.map(lane, range(args.gpus)) for r in lane_results]
+    import torch
+    if torch.cuda.device_count() < args.gpus:
+        raise RuntimeError("Scheduler allocation exposes fewer GPUs than requested")
+    def run_singles(selected: list[dict], output: Path) -> list[dict]:
+        lanes = [selected[i::args.gpus] for i in range(args.gpus)]
+        def lane(index: int):
+            return [run_trial(t, output, [devices[index]]) for t in lanes[index]]
+        with ThreadPoolExecutor(max_workers=args.gpus) as pool:
+            return [r for lane_results in pool.map(lane, range(args.gpus)) for r in lane_results]
+
+    if args.suite == "all":
+        validation_dir = args.output / "validation"
+        validation_dir.mkdir(exist_ok=True)
+        validation = [dict(suite="validation", method=m, states=s, ac="none", offload=False,
+                           mb=1, dp=1, steps=2, trace=m == "muon" and s == "fp8", fused=False)
+                      for m, s in itertools.product(METHODS, ("fp32", "fp8"))]
+        validation.append(dict(suite="validation", method="muon", states="fp8", ac="none",
+                               offload=False, mb=1, dp=1, steps=2, trace=True, fused=True))
+        validation_results = run_singles(validation, validation_dir)
+        for method in ("muon", "adam", "frugal", "slim_adam"):
+            trial = dict(suite="b4", method=method, states="fp8" if method in ("muon", "adam") else "fp32",
+                         ac="none", offload=False, mb=1, dp=2, steps=2, trace=False, fused=False)
+            validation_results.append(run_trial(trial, validation_dir, devices[:2]))
+        if any(r["status"] != "success" for r in validation_results):
+            raise RuntimeError("Validation did not pass for every implementation")
+        print("GPU_VALIDATION_COMPLETE", flush=True)
+
+    results = run_singles([t for t in trials if t["suite"] in ("smoke", "b2")], args.output)
     for trial in trials:
         if trial["suite"] == "b4":
             results.append(run_trial(trial, args.output, devices[:trial["dp"]]))
+    results += run_singles([t for t in trials if t["suite"] == "b1"], args.output)
     STOP.set()
     (args.output / "results.json").write_text(json.dumps(results, indent=2))
+    subprocess.run([sys.executable, str(ROOT / "scripts/report_rebuttal_memory.py"),
+                    str(args.output), str(args.output / "tables")], check=True)
     print("CAMPAIGN_COMPLETE=" + str(len(results)), flush=True)
 
 
