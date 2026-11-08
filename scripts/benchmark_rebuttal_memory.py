@@ -129,6 +129,10 @@ def run_trial(trial: dict, output: Path, devices: list[str]) -> dict:
         raise RuntimeError("Campaign stopped by disk guard")
     guard(output, 100_000_000 if trial["trace"] else 10_000_000)
     run_dir = output / trial_name(trial)
+    if run_dir.exists() and not (run_dir / "result.json").exists():
+        archive = output / "interrupted"
+        archive.mkdir(exist_ok=True)
+        run_dir.rename(archive / (run_dir.name + "_" + str(time.time_ns())))
     run_dir.mkdir(exist_ok=True)
     result_path = run_dir / "result.json"
     if result_path.exists():
@@ -188,8 +192,15 @@ def main() -> None:
     parser.add_argument("--gpus", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--output", type=Path, default=Path("/home/jovyan/rebuttal-memory-20261108"))
     parser.add_argument("--plan", action="store_true")
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     args = parser.parse_args()
+    if not 0 <= args.shard_index < args.shard_count:
+        parser.error("Shard index must be in [0, shard-count)")
+    if args.shard_count != 1 and args.suite != "b1":
+        parser.error("Independent shards are supported only for B1")
     trials = grid(args.suite)
+    trials = trials[args.shard_index::args.shard_count]
     if args.plan:
         print(json.dumps([dict(trial=t, command=command(t)) for t in trials], indent=2))
         return
@@ -234,9 +245,10 @@ def main() -> None:
             results.append(run_trial(trial, args.output, devices[:trial["dp"]]))
     results += run_singles([t for t in trials if t["suite"] == "b1"], args.output)
     STOP.set()
-    (args.output / "results.json").write_text(json.dumps(results, indent=2))
+    suffix = f"_shard{args.shard_index}" if args.shard_count > 1 else ""
+    (args.output / f"results{suffix}.json").write_text(json.dumps(results, indent=2))
     subprocess.run([sys.executable, str(ROOT / "scripts/report_rebuttal_memory.py"),
-                    str(args.output), str(args.output / "tables")], check=True)
+                    str(args.output), str(args.output / ("tables" + suffix))], check=True)
     print("CAMPAIGN_COMPLETE=" + str(len(results)), flush=True)
 
 
