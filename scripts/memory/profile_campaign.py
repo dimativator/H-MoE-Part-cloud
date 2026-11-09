@@ -32,8 +32,24 @@ def guard():
 
 def main():
     global CHILD
-    parser = argparse.ArgumentParser();parser.add_argument('--preflight',action='store_true');args=parser.parse_args()
+    parser = argparse.ArgumentParser();parser.add_argument('--preflight',action='store_true');parser.add_argument('--inspect',action='store_true');args=parser.parse_args()
     guard();OUT.mkdir(exist_ok=True)
+    if args.inspect:
+        for path in sorted(OUT.glob('*.json')):
+            if path.name.endswith('.config.json') or path.name == 'results.json':
+                continue
+            value = json.loads(path.read_text())
+            if path.name.endswith('.lines.json'):
+                changes = [dict(previous=a, current=b, delta=b['allocated']-a['allocated'])
+                           for a,b in zip(value,value[1:])]
+                print('LINE_EVIDENCE='+json.dumps(dict(path=str(path), events=len(value),
+                      largest_increases=sorted(changes,key=lambda x:x['delta'],reverse=True)[:12])),flush=True)
+            else:
+                print('SAVED_PROFILE='+json.dumps(dict(path=str(path),profile=value)),flush=True)
+        for path in sorted(OUT.glob('*.log')):
+            if not path.with_suffix('.json').exists():
+                print('UNFINISHED_LOG='+json.dumps(dict(path=str(path),tail=path.read_text(errors='replace')[-5000:])),flush=True)
+        return
     metadata=json.loads((DATA/'packed_metadata.json').read_text());print('DATA='+json.dumps(metadata)[:1200],flush=True)
     os.chdir(ROOT)
     os.environ.update(WANDB_MODE='disabled',PYTHONUNBUFFERED='1',TOKENIZERS_PARALLELISM='false',
