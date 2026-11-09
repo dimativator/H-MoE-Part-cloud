@@ -42,10 +42,17 @@ def main():
             if path.name.endswith('.lines.json'):
                 changes = [dict(previous=a, current=b, delta=b['allocated']-a['allocated'])
                            for a,b in zip(value,value[1:])]
-                print('LINE_EVIDENCE='+json.dumps(dict(path=str(path), events=len(value),
-                      largest_increases=sorted(changes,key=lambda x:x['delta'],reverse=True)[:12])),flush=True)
+                for kind, items in [('allocation', sorted(changes,key=lambda x:x['delta'],reverse=True)[:12]),
+                                    ('peak', [c for c in changes if c['current']['peak'] > c['previous']['peak']])]:
+                    for item in items:
+                        print('LINE_EVENT='+json.dumps(dict(path=str(path),kind=kind,**item)),flush=True)
             else:
-                print('SAVED_PROFILE='+json.dumps(dict(path=str(path),profile=value)),flush=True)
+                steps=value.pop('steps')
+                print('PROFILE_HEADER='+json.dumps(dict(path=str(path),profile=value)),flush=True)
+                for step in steps:
+                    print('PROFILE_STEP='+json.dumps(dict(path=str(path),step=step)),flush=True)
+        for path in sorted(OUT.glob('*.snapshot.pickle')):
+            print('SNAPSHOT_FILE='+json.dumps(dict(path=str(path),bytes=path.stat().st_size)),flush=True)
         for path in sorted(OUT.glob('*.log')):
             if not path.with_suffix('.json').exists():
                 print('UNFINISHED_LOG='+json.dumps(dict(path=str(path),tail=path.read_text(errors='replace')[-5000:])),flush=True)
