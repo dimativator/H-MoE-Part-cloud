@@ -8,6 +8,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'src'), str(ROOT)]
 from optim.mem_profile import MemProfiler, persistent_bytes
+from profile_data import build_readers
+from data import fineweb_packed
+fineweb_packed.build_packed_fineweb_readers = build_readers
 
 before = MemProfiler.before_opt_step
 after = MemProfiler.after_opt_step

@@ -58,6 +58,13 @@ def main():
         p=subprocess.run([sys.executable,'src/main.py','--help'],capture_output=True,text=True)
         print('IMPORT_CHECK='+str(p.returncode),flush=True)
         if p.returncode: print(p.stderr[-5000:],flush=True);raise RuntimeError('Training imports failed')
+        sys.path[:0] = [str(ROOT/'src'),str(ROOT)]
+        from profile_data import build_readers
+        for mb in [1,32]:
+            readers=build_readers(SimpleNamespace(datasets_dir=str(DATA),sequence_length=1024,batch_size=mb,eval_batch_size=1),rank=0,world_size=1)
+            for _ in range(10):
+                x,y=readers['train'].sample_batch()
+                assert tuple(x.shape)==(mb,1024) and tuple(y.shape)==(mb,1024)
         print('PROFILE_PREFLIGHT_OK',flush=True);return
     sys.path.insert(0,str(ROOT/'scripts/benchmarks'))
     from benchmark_peak_memory import command_for
@@ -67,6 +74,11 @@ def main():
         for mb in [1,32]:
             guard();name=f'{method}_fp8_mb{mb}';profile=OUT/(name+'.json')
             if profile.exists(): raise RuntimeError('Refusing duplicate completed profile '+name)
+            for suffix in ['.log','.config.json']:
+                previous=OUT/(name+suffix)
+                if previous.exists():
+                    archive=OUT/'interrupted';archive.mkdir(exist_ok=True)
+                    previous.rename(archive/(str(time.time_ns())+'_'+previous.name))
             cmd=command_for(SimpleNamespace(steps=10),'500M',method,'fp8_states',mb)
             cmd=[sys.executable,'-m','torch.distributed.run']+cmd[1:]
             cmd[cmd.index('src/main.py')]='scripts/memory/profile_train.py'
