@@ -30,6 +30,9 @@ def trace(frame, event, arg):
 
 
 def before_step(self):
+    loss = sys._getframe(1).f_locals.get('loss')
+    if isinstance(loss, torch.Tensor):
+        self._rec['loss'] = float(loss.detach())
     self._rec['persistent_before_opt'] = persistent_bytes(self.model, self.opt)
     before(self)
     if len(self.records) == self.n_steps - 1:
