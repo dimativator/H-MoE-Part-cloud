@@ -1,6 +1,7 @@
 """Independent one-GPU memory attribution campaign; logs and metadata only."""
 import argparse
 import itertools
+import gzip
 import json
 import math
 import os
@@ -112,6 +113,12 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['preflight','smoke','full','inspect'],default='preflight');args=parser.parse_args()
     guard();OUT.mkdir(parents=True,exist_ok=True)
     if args.mode=='inspect':
+        from memory_attribution import replay
+        for path in sorted(OUT.glob('*/snapshot*.json.gz')):
+            with gzip.open(path,'rt') as handle:data=json.load(handle)
+            result=replay(data['initial'],data['final'],{int(k):v for k,v in data['inventories'].items()},data['before_index'],data['measured_peak'])
+            result.pop('unclassified_stack_bytes')
+            print('ATTR_REPLAY_CHECK='+json.dumps(dict(path=str(path),**result)),flush=True)
         for path in sorted(OUT.glob('*/result.json')):
             print('ATTR_RESULT='+path.read_text().replace('\n',''),flush=True)
         for path in sorted(OUT.glob('*/telemetry.jsonl')):
