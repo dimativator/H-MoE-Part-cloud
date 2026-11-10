@@ -1,5 +1,6 @@
 """Opt-in memory attribution. Does not modify model or optimizer arithmetic."""
 import collections
+import bisect
 import gzip
 import json
 import os
@@ -27,6 +28,10 @@ def replay(initial, final, inventories, before_index, measured_peak):
     start_index = len(initial.get('device_traces', [[]])[0])
     events = final['device_traces'][0][start_index:]
     live = block_map(initial)
+    pending = {b.get('address',0):dict(size=b['size']) for segment in initial['segments']
+               for b in segment['blocks'] if b['state']=='active_awaiting_free'}
+    occupied = {**live, **pending}
+    addresses = sorted(occupied)
     segments = {s['address']: s['total_size'] for s in initial['segments']}
     labels = {}
     # Attach inventories to allocation lifetimes, not raw pointers across reuse.
@@ -40,6 +45,7 @@ def replay(initial, final, inventories, before_index, measured_peak):
     current = sum(x['size'] for x in live.values())
     peak = current
     peak_live, peak_segments = dict(live), dict(segments)
+    peak_pending = dict(pending)
     peak_index = -1
     unknown = 0
     reserved_supported = True
@@ -48,15 +54,33 @@ def replay(initial, final, inventories, before_index, measured_peak):
         if action == 'alloc':
             if pointer in live:
                 raise RuntimeError('Allocation address reused while live')
-            live[pointer] = dict(size=event['size'], frames=event.get('frames', []),
-                                born=index, requested=event.get('requested_size'))
-            current += event['size']
+            # Native ALLOC traces contain requested bytes, not allocated block size.
+            # Reconstruct the default native allocator's rounding and split rule.
+            segment_end = next(base+size for base,size in segments.items() if base <= pointer < base+size)
+            position = bisect.bisect_left(addresses,pointer)
+            limit = min(segment_end,addresses[position]) if position < len(addresses) else segment_end
+            available = limit-pointer
+            rounded = max(512, (event['size']+511)//512*512)
+            if available < rounded:
+                raise RuntimeError('Allocator replay has insufficient free block')
+            split = available-rounded >= 512 if rounded <= 1048576 else available-rounded > 1048576
+            size = rounded if split else available
+            live[pointer] = dict(size=size, frames=event.get('frames', []),born=index,requested=event['size'])
+            occupied[pointer]=live[pointer]
+            bisect.insort(addresses,pointer)
+            current += size
         elif action == 'free_requested':
             old = live.pop(pointer, None)
             if old is None:
                 unknown += 1
             else:
                 current -= old['size']
+                pending[pointer]=old
+        elif action == 'free_completed':
+            pending.pop(pointer,None)
+            if pointer in occupied:
+                occupied.pop(pointer)
+                addresses.pop(bisect.bisect_left(addresses,pointer))
         elif action == 'segment_alloc':
             segments[pointer] = event['size']
         elif action == 'segment_free':
@@ -66,6 +90,7 @@ def replay(initial, final, inventories, before_index, measured_peak):
         label_at(index)
         if current > peak:
             peak, peak_live, peak_segments, peak_index = current, dict(live), dict(segments), index
+            peak_pending = dict(pending)
     # Inventories correspond to snapshot event counts (boundary after last event).
     totals = collections.Counter()
     stacks = collections.Counter()
@@ -83,8 +108,17 @@ def replay(initial, final, inventories, before_index, measured_peak):
             frames = [f for f in block['frames'] if f.get('filename', '').endswith('.py')]
             stack = ' | '.join(f"{Path(f['filename']).name}:{f.get('line')}:{f.get('name')}" for f in frames[:7])
             stacks[stack or 'no_python_stack'] += block['size']
+    split_free, cached_free = 0,0
+    for base,size in peak_segments.items():
+        used=sum(b['size'] for address,b in {**peak_live,**peak_pending}.items() if base <= address < base+size)
+        if used:split_free += size-used
+        else:cached_free += size
     final_bytes = sum(v['size'] for v in block_map(final).values())
     return dict(peak_allocated_bytes=peak, peak_event_index=peak_index,
+                requested_at_peak_bytes=sum(b['requested'] for b in peak_live.values()),
+                allocation_padding_at_peak_bytes=sum(b['size']-b['requested'] for b in peak_live.values()),
+                inactive_split_at_peak_bytes=split_free, inactive_unsplit_at_peak_bytes=cached_free,
+                pending_free_at_peak_bytes=sum(b['size'] for b in peak_pending.values()),
                 peak_phase='optimizer' if peak_index >= before_index else 'forward_backward',
                 reserved_at_peak_bytes=sum(peak_segments.values()) if reserved_supported else None,
                 components_at_peak=dict(totals),
@@ -93,7 +127,7 @@ def replay(initial, final, inventories, before_index, measured_peak):
                 replay_matches_final=current == final_bytes, unknown_frees=unknown,
                 matches_measured_peak=peak == measured_peak, measured_peak_bytes=measured_peak,
                 trace_events=len(events), reserved_replay_supported=reserved_supported,
-                note='Components share one peak instant. Unclassified bytes are not automatically optimizer workspace. Fragmentation and requested-size rounding are sampled at boundaries, not inferred from reserved-minus-allocated.')
+                note='Components share one peak instant. Unclassified bytes are not automatically optimizer workspace. Default native allocator block splitting is replayed, including pending frees. Cross-check final and peak bytes before using inferred padding/split values.')
 
 
 def tensor_storages(values):
