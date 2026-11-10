@@ -1,5 +1,6 @@
 """Opt-in memory attribution. Does not modify model or optimizer arithmetic."""
 import collections
+import atexit
 import bisect
 import gzip
 import json
@@ -174,6 +175,12 @@ class Tracker:
         self.stop = threading.Event()
         self.sampler = threading.Thread(target=self.sample_loop, daemon=True)
         self.sampler.start()
+        atexit.register(self.close)
+
+    def close(self):
+        self.stop.set()
+        if threading.current_thread() is not self.sampler:
+            self.sampler.join()
 
     def counters(self):
         cuda = self.torch.cuda
@@ -221,9 +228,13 @@ class Tracker:
 
     def finish(self, peak, loss):
         self.torch.cuda.synchronize()
+        phase_peak = peak
+        peak = max(peak, self.torch.cuda.max_memory_allocated())
         end = self.counters()
         inventory = self.inventory()
         result = dict(step=self.step, losses=loss, peak_allocated_bytes=peak,
+                      pre_finalize_phase_peak_bytes=phase_peak,
+                      peak_scope="full step including loss reduction/finalization",
                       forward_backward_peak_bytes=self.fb_peak,
                       optimizer_peak_bytes=self.torch.cuda.max_memory_allocated(),
                       start=self.start, before_optimizer=self.before, end=end,
@@ -249,3 +260,4 @@ class Tracker:
         with (self.root/'telemetry.jsonl').open('a') as handle:
             handle.write(json.dumps(result)+'\n')
         self.phase = 'between_steps'
+        if self.step == 15:self.close()
