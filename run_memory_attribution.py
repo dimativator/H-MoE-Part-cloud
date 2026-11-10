@@ -136,7 +136,7 @@ def main():
                 data=build_readers(SimpleNamespace(datasets_dir='/workspace-SR006.nfs3/dimativator/fineweb-h200-packed',sequence_length=1024,batch_size=mb,eval_batch_size=mb),rank=0,world_size=1)
                 for _ in range(15):assert data['train'].sample_batch()[0].shape==(mb,1024)
         else:
-            p=subprocess.run([sys.executable,'stage4/pretrain_gpt.py','--optimizer-state-precision','fp32','--help'],env=environment(first,path),capture_output=True,text=True)
+            p=subprocess.run([sys.executable,'-c',"from stage4.rebuttal_memory import install; install('fp32')"],env=environment(first,path),capture_output=True,text=True)
         print('IMPORT_EXIT='+str(p.returncode),flush=True)
         if p.returncode:print(p.stderr[-5000:],flush=True);raise RuntimeError('Import failed')
         print('ATTR_PREFLIGHT_OK='+BACKEND,flush=True);return

@@ -35,8 +35,10 @@ def tensors(value, seen=None):
     elif isinstance(value, (tuple, list)):
         for item in value:
             yield from tensors(item, seen)
-    elif hasattr(value, "basis"):
-        yield from tensors(value.basis, seen)
+    else:
+        for attribute in ("basis", "ortho_matrix", "transformed_low_rank"):
+            if hasattr(value, attribute):
+                yield from tensors(getattr(value, attribute), seen)
 
 
 def storage_inventory(values) -> dict:
