@@ -168,6 +168,9 @@ def install(precision: str) -> None:
         model, optimizer, scheduler = original_setup(*args, **kwargs)
         if os.environ.get("REBUTTAL_SHARD") == "1":
             install_state_sharding(optimizer)
+        if os.environ.get("ATTRIBUTION_DIR"):
+            from memory_attribution import Tracker
+            state["attribution"] = Tracker(lambda: {k:v["storages"] for k,v in inventory(model,optimizer).items()})
         original_step = optimizer.step
 
         def optimizer_step(*args, **kwargs):
@@ -177,6 +180,8 @@ def install(precision: str) -> None:
             if state.get("trace"):
                 state["before_optimizer_inventory"] = inventory(model, optimizer)
                 state["before_optimizer_snapshot"] = torch.cuda.memory._snapshot()
+            if "attribution" in state:
+                state["attribution"].before_optimizer()
             torch.cuda.reset_peak_memory_stats()
             start = time.perf_counter()
             result = original_step(*args, **kwargs)
@@ -213,6 +218,8 @@ def install(precision: str) -> None:
             torch.cuda.memory._record_memory_history(max_entries=100000)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
+        if "attribution" in state:
+            state["attribution"].begin()
         start = time.perf_counter()
         result = original_train_step(*args, **kwargs)
         torch.cuda.synchronize()
@@ -229,6 +236,9 @@ def install(precision: str) -> None:
              allocated_bytes=allocated, reserved_bytes=reserved,
              reserved_minus_allocated_bytes=reserved - allocated,
              inventory=details)
+        if "attribution" in state:
+            state["attribution"].finish(max(state["forward_backward_peak"],state["optimizer_peak"]),
+                                        {name:float(value) for name,value in result[0].items()})
         if trace:
             path = Path(os.environ["REBUTTAL_RUN_DIR"]) / f"allocator-rank{dist.get_rank()}-step{step}.json.gz"
             snapshot = torch.cuda.memory._snapshot()
