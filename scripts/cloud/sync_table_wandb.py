@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import zlib
 
 BASE_URL = "https://wandb-radfan.ru"
 LOGS = "/home/jovyan/shares/SR006.nfs3/mlsub-logs"
@@ -215,15 +216,26 @@ def main() -> None:
             s = os.statvfs(p)
             emit("NFS2_READ_ONLY", {"path": p, "available_bytes": s.f_bavail * s.f_frsize,
                                     "used_for_writes": False})
-    payload = json.loads(base64.b64decode(os.environ["SYNC_TARGETS_B64"]))
+    raw_payload = base64.b64decode(os.environ["SYNC_TARGETS_B64"])
+    if os.environ.get("SYNC_TARGETS_COMPRESSED") == "1":
+        raw_payload = zlib.decompress(raw_payload)
+    payload = json.loads(raw_payload)
     stop = threading.Event()
     threading.Thread(target=watchdog, args=(stop,), daemon=True).start()
     try:
         if os.environ.get("SYNC_MODE", "inventory") == "inventory":
             inventory(set(payload.get("run_ids", [])))
         else:
+            failures = []
             for target in payload["targets"]:
-                sync_binary(target)
+                try:
+                    sync_binary(target)
+                except Exception as exc:
+                    failures.append(target["id"])
+                    emit("SYNC_ERROR", {"id": target["id"], "error": str(exc)})
+            if failures:
+                emit("SYNC_FAILURES", failures)
+                raise RuntimeError("Some existing runs could not be synchronized")
     finally:
         stop.set()
     guard()
