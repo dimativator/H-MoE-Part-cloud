@@ -97,10 +97,11 @@ def run(t):
     log=(path/'train.log').read_text(errors='replace')
     finite=len(events)==t['steps'] and all(e['losses'] and all(math.isfinite(v) for v in e['losses'].values()) for e in events)
     traces=[e['attribution'] for e in events if 'attribution' in e]
-    valid_trace=(len(traces)==3 if t['trace'] else not traces) and all(a['replay_matches_final'] and not a['unknown_frees'] and a['matches_measured_peak'] for a in traces)
+    valid_trace=(len(traces)==t['steps'] if t['trace'] else not traces) and all(a['replay_matches_final'] and not a['unknown_frees'] and a['matches_measured_peak'] for a in traces)
     status='success' if code==0 and finite and valid_trace else 'oom' if 'out of memory' in log.lower() else 'failed'
     result=dict(config=config,status=status,return_code=code,steps=len(events),finite=finite,valid_trace=valid_trace,
-                peak_allocated_bytes=max((e['peak_allocated_bytes'] for e in events),default=None))
+                peak_allocated_bytes=max((e['peak_allocated_bytes'] for e in events),default=None),
+                trace_checks=[{k:a[k] for k in ['replay_matches_final','unknown_frees','matches_measured_peak','peak_allocated_bytes','measured_peak_bytes','replay_final_bytes','snapshot_final_bytes']} for a in traces])
     (path/'result.json').write_text(json.dumps(result,indent=2));print('ATTR_RESULT='+json.dumps(result),flush=True)
     if status=='failed':
         print(log[-6000:],flush=True);raise RuntimeError('Trial failed: '+name)

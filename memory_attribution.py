@@ -131,7 +131,8 @@ class Tracker:
         except Exception as error:
             runtime['process_inventory_error']=repr(error)
         (self.root/'runtime.json').write_text(json.dumps(runtime,indent=2))
-        self.traced_steps = {1, 6, 11} if os.environ.get('ATTRIBUTION_TRACE') == '1' else set()
+        self.traced_steps = set(range(1,16)) if os.environ.get('ATTRIBUTION_TRACE') == '1' else set()
+        self.raw_peak = -1
         self.step = 0
         self.phase = 'setup'
         self.lock = threading.Lock()
@@ -203,9 +204,14 @@ class Tracker:
             stat=os.statvfs(self.root)
             if stat.f_bavail*stat.f_frsize <= 7_000_000_000:
                 raise RuntimeError('CRITICAL CLOUD.RU STORAGE: insufficient reserve plus 2GB snapshot write allowance')
-            path=self.root/f'snapshot-step{self.step}.json.gz' 
-            with gzip.open(path,'wt') as handle:
-                json.dump(dict(initial=self.initial,final=final,inventories=self.inventories,before_index=self.before_index,measured_peak=peak),handle)
+            paths=[]
+            if self.step in (1,6,11):paths.append(self.root/f'snapshot-step{self.step}.json.gz')
+            if peak > self.raw_peak:
+                self.raw_peak=peak
+                paths.append(self.root/'snapshot-peak.json.gz')
+            for path in paths:
+                with gzip.open(path,'wt') as handle:
+                    json.dump(dict(initial=self.initial,final=final,inventories=self.inventories,before_index=self.before_index,measured_peak=peak,step=self.step),handle)
         with (self.root/'telemetry.jsonl').open('a') as handle:
             handle.write(json.dumps(result)+'\n')
         self.phase = 'between_steps'
