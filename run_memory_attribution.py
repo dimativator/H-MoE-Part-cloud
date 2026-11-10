@@ -118,7 +118,7 @@ def main():
             telemetry=path.parent/'telemetry.jsonl'
             events=[json.loads(line) for line in telemetry.read_text().splitlines()] if telemetry.exists() else []
             record=dict(backend=BACKEND,name=path.parent.name,trial=result['config']['trial'],revision=result['config']['revision'],status=result['status'],steps=result['steps'],finite=result['finite'],valid_trace=result['valid_trace'])
-            if events:
+            if events and result["status"] == "success":
                 samples=[e['sampled_near_peak'] for e in events if e.get('sampled_near_peak')]
                 gaps=[v['device_used']-v['reserved'] for v in samples]
                 record.update(first_peak=events[0]['peak_allocated_bytes'],
