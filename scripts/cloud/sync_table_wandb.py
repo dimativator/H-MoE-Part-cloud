@@ -216,7 +216,11 @@ def main() -> None:
             s = os.statvfs(p)
             emit("NFS2_READ_ONLY", {"path": p, "available_bytes": s.f_bavail * s.f_frsize,
                                     "used_for_writes": False})
-    raw_payload = base64.b64decode(os.environ["SYNC_TARGETS_B64"])
+    encoded_payload = os.environ.get("SYNC_TARGETS_B64")
+    if encoded_payload is None:
+        encoded_payload = "".join(os.environ["SYNC_PART_" + str(i)]
+                                  for i in range(int(os.environ["SYNC_PARTS"])))
+    raw_payload = base64.b64decode(encoded_payload)
     if os.environ.get("SYNC_TARGETS_COMPRESSED") == "1":
         raw_payload = zlib.decompress(raw_payload)
     payload = json.loads(raw_payload)
