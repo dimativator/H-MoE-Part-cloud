@@ -72,7 +72,7 @@ def environment(t,path):
         env['PYTHONPATH']=':'.join(str(p) for p in [ROOT/'third_party/Megatron-LM',ROOT/'third_party/emerging-optimizers',ROOT])
     return env
 
-def run(t):
+def run(t,retry_failed=False):
     global CHILD
     guard()
     name=f"{t['method']}_{t['states']}_mb{t['mb']}_{t['allocator']}_r{t['repeat']}"
@@ -80,7 +80,7 @@ def run(t):
     if (path/'result.json').exists():
         result=json.loads((path/'result.json').read_text())
         if result['status'] in ['success','oom']:return result
-        raise RuntimeError('Existing failed result requires diagnosis before retry: '+str(path))
+        if not retry_failed:raise RuntimeError('Existing failed result requires diagnosis before retry: '+str(path))
     if path.exists():
         archive=OUT/'interrupted';archive.mkdir(exist_ok=True);path.rename(archive/(name+'_'+str(time.time_ns())))
     path.mkdir()
@@ -110,7 +110,7 @@ def run(t):
 
 def main():
     os.chdir(ROOT)
-    parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['preflight','smoke','full','inspect'],default='preflight');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['preflight','smoke','full','inspect'],default='preflight');parser.add_argument('--retry-failed',action='store_true');args=parser.parse_args()
     guard();OUT.mkdir(parents=True,exist_ok=True)
     if args.mode=='inspect':
         from memory_attribution import replay
@@ -150,7 +150,10 @@ def main():
         print('ATTR_PREFLIGHT_OK='+BACKEND,flush=True);return
     selected=grid()
     if args.mode=='smoke':selected=[t for t in selected if t['mb']==1 and t['repeat']==0 and t['allocator']=='native' and (t['method'],t['states']) in [('Muon','fp8'),('SOAP','fp32')]]
-    results=[run(t) for t in selected]
+    if args.mode=='full':
+        checks=[t for t in selected if t['mb']==1 and t['repeat']==0 and t['allocator']=='native' and (t['method'],t['states']) in [('Muon','fp8'),('SOAP','fp32')]]
+        selected=checks+[t for t in selected if t not in checks]
+    results=[run(t,args.retry_failed) for t in selected]
     print('ATTR_COMPLETE='+json.dumps(dict(backend=BACKEND,mode=args.mode,trials=len(results),statuses=dict((s,sum(r['status']==s for r in results)) for s in ['success','oom']))),flush=True)
 
 if __name__=='__main__':
