@@ -110,8 +110,37 @@ def run(t,retry_failed=False):
 
 def main():
     os.chdir(ROOT)
-    parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['preflight','smoke','full','inspect'],default='preflight');parser.add_argument('--retry-failed',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['preflight','smoke','full','inspect','summary'],default='preflight');parser.add_argument('--retry-failed',action='store_true');args=parser.parse_args()
     guard();OUT.mkdir(parents=True,exist_ok=True)
+    if args.mode=='summary':
+        for path in sorted(OUT.glob('*/result.json')):
+            result=json.loads(path.read_text())
+            telemetry=path.parent/'telemetry.jsonl'
+            events=[json.loads(line) for line in telemetry.read_text().splitlines()] if telemetry.exists() else []
+            record=dict(backend=BACKEND,name=path.parent.name,trial=result['config']['trial'],revision=result['config']['revision'],status=result['status'],steps=result['steps'],finite=result['finite'],valid_trace=result['valid_trace'])
+            if events:
+                samples=[e['sampled_near_peak'] for e in events if e.get('sampled_near_peak')]
+                gaps=[v['device_used']-v['reserved'] for v in samples]
+                record.update(first_peak=events[0]['peak_allocated_bytes'],
+                              steady_peak=max(e['peak_allocated_bytes'] for e in events[1:]),
+                              peak_forward_backward=max(e['forward_backward_peak_bytes'] for e in events),
+                              peak_optimizer=max(e['optimizer_peak_bytes'] for e in events),
+                              persistent_last=events[-1]['persistent_bytes'],
+                              first_loss=events[0]['losses'],last_loss=events[-1]['losses'],
+                              sampled_device_minus_reserved_range=[min(gaps),max(gaps)] if gaps else None)
+                winning=max(events,key=lambda e:e['peak_allocated_bytes'])
+                record['peak_step']=winning['step']
+                record['sampled_near_peak_step']=winning['sampled_near_peak']
+                record['boundary_counters_peak_step']=dict(start=winning['start'],before_optimizer=winning['before_optimizer'],end=winning['end'])
+                if 'attribution' in winning:
+                    a=dict(winning['attribution']);stacks=a.pop('unclassified_stack_bytes')
+                    print('ATTR_PEAK='+json.dumps(dict(backend=BACKEND,trial=path.parent.name,step=winning['step'],**a)),flush=True)
+                    for stack in stacks:print('ATTR_STACK='+json.dumps(dict(backend=BACKEND,trial=path.parent.name,step=winning['step'],**stack)),flush=True)
+            print('ATTR_COMPACT='+json.dumps(record),flush=True)
+            runtime=path.parent/'runtime.json'
+            if runtime.exists():print('ATTR_RUNTIME='+json.dumps(dict(backend=BACKEND,trial=path.parent.name,runtime=json.loads(runtime.read_text()))),flush=True)
+        print('ATTR_SUMMARY_COMPLETE='+BACKEND,flush=True)
+        return
     if args.mode=='inspect':
         from memory_attribution import replay
         for path in sorted(OUT.glob('*/snapshot*.json.gz')):
