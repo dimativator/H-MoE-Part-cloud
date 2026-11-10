@@ -110,8 +110,9 @@ def tensor_storages(values):
             for child in value.values(): visit(child)
         elif isinstance(value, (tuple, list)):
             for child in value: visit(child)
-        elif hasattr(value, 'basis'):
-            visit(value.basis)
+        else:
+            for attribute in ('basis','ortho_matrix','transformed_low_rank'):
+                if hasattr(value,attribute):visit(getattr(value,attribute))
     visit(values)
     return result
 
