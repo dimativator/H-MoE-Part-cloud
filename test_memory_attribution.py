@@ -24,3 +24,30 @@ final=dict(segments=[dict(address=0,total_size=4*1048576,blocks=[block(0,4*10485
 r=replay(initial,final,{},0,4*1048576)
 assert r['matches_measured_peak'] and r['replay_matches_final'] and r['allocation_padding_at_peak_bytes']==1048576
 print('REPLAY_CPU_TEST_OK')
+
+# Finalization may allocate after the optimizer wrapper records its phase peak.
+import json
+import tempfile
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+from memory_attribution import Tracker
+tracker=Tracker.__new__(Tracker)
+tracker.torch=SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda:None,max_memory_allocated=lambda:1536))
+tracker.inventory=lambda:{}
+tracker.counters=lambda:{}
+tracker.step=15
+tracker.trace=False
+tracker.fb_peak=512
+tracker.start=tracker.before={}
+tracker.sampled=None
+tracker.stop=threading.Event()
+tracker.sampler=threading.Thread(target=tracker.stop.wait)
+tracker.sampler.start()
+with tempfile.TemporaryDirectory() as folder:
+    tracker.root=Path(folder)
+    tracker.finish(1024,{'loss':1.0})
+    result=json.loads((tracker.root/'telemetry.jsonl').read_text())
+    assert result['peak_allocated_bytes']==1536 and result['pre_finalize_phase_peak_bytes']==1024
+assert not tracker.sampler.is_alive()
+print('FINALIZE_AND_SAMPLER_TEST_OK')
