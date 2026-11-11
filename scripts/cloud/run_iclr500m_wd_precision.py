@@ -15,6 +15,8 @@ ROOT = Path(os.environ.get('RESULTS_DIR', '/workspace-SR006.nfs3/dimativator/icl
 DATA = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
 LOGS = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
 RANK = int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
+RUN_PREFIX = 'iclr500m-'
+RUN_SUFFIX = '-20261106'
 TRIALS = {
     'galore_bf16_1xc': ('galore_adamw', 'bf16', '1e-3', '1e-4', 75457, 4),
     'frugal_mm_bf16_1xc': ('coord_muon', 'bf16', '2e-3', '1e-3', 75457, 4),
@@ -48,6 +50,8 @@ def preflight() -> None:
     if os.environ.get('VERIFIED_BOOTSTRAP_LOGS_DIR') != LOGS:
         raise RuntimeError('NFS3 bootstrap logs must be verified on gateway')
     allowed_root = Path('/workspace-SR006.nfs3/dimativator/iclr500m-wd-precision-20261106')
+    if ROOT == Path('/workspace-SR006.nfs3/dimativator/galore-apollo-257m-beta2-20261111'):
+        allowed_root = ROOT
     if ROOT != allowed_root and allowed_root not in ROOT.parents:
         raise RuntimeError('Unexpected output root')
     for path in (ROOT, *ROOT.parents):
@@ -157,7 +161,7 @@ def train(trial: str, smoke: bool) -> None:
     env = {**os.environ, 'RANK': str(RANK), 'WORLD_SIZE': str(world),
         'LOCAL_RANK': os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'),
         'MASTER_ADDR': rendezvous['master_addr'], 'MASTER_PORT': str(rendezvous['master_port']),
-        'WANDB_MODE': 'disabled' if smoke else 'online', 'WANDB_RUN_ID': 'iclr500m-' + trial + '-20261106', 'WANDB_RESUME': 'never'}
+        'WANDB_MODE': 'disabled' if smoke else 'online', 'WANDB_RUN_ID': RUN_PREFIX + trial + RUN_SUFFIX, 'WANDB_RESUME': 'never'}
     command = [sys.executable, *arguments(trial, smoke)]
     log = ROOT / 'logs' / f'{name}_rank{RANK}.log'
     emit('RUN_CONFIG', dict(trial=trial, smoke=smoke, rank=RANK, world=world, command=command, checkpoints=False))
