@@ -468,6 +468,30 @@ def main(args):
               f"transition_start={int(args.iterations * args.soft_lion_muon_start_fraction)} "
               f"weight_decay={args.weight_decay} states=FP32 calibration=pre_update_lion_direction "
               f"soft_map=algebraic separate_temperatures=True", flush=True)
+    elif args.opt in ("lion_muon", "muon_reference"):
+        from third_party.lion_muon.lion_muon import LionMuon
+        from third_party.lion_muon.muon import Muon
+        if args.fp8_optim or args.reference_aux_lr <= 0:
+            raise ValueError("Reference optimizers require FP32 states and positive auxiliary LR")
+        matrices, auxiliary = [], []
+        for name, p in distributed_backend.get_raw_model(model).named_parameters():
+            for translated in distributed_backend.translate_model_parameter_name_for_node(name):
+                param = param_name_mapping[translated]
+                if param.ndim == 2 and not any(k in name for k in ("wte", "lm_head", "embed")):
+                    matrices.append(param)
+                else:
+                    auxiliary.append(param)
+        kwargs = dict(lr=args.lr, weight_decay=args.weight_decay, ns_steps=6,
+                      adamw_params=auxiliary, adamw_lr=args.reference_aux_lr,
+                      adamw_betas=(args.beta1, args.beta2), adamw_eps=args.eps,
+                      adamw_wd=args.weight_decay)
+        if args.opt == "lion_muon":
+            opt = LionMuon(matrices, lion_lr=args.lr * 0.01, beta1=0.95,
+                           beta2=0.99, muon_every_k=5, **kwargs)
+        else:
+            opt = Muon(matrices, momentum=0.95, nesterov=True, **kwargs)
+        print(f"REFERENCE_CONFIG optimizer={args.opt} matrix_lr={args.lr} "
+              f"auxiliary_lr={args.reference_aux_lr} ns_steps=6 states=FP32", flush=True)
     elif args.opt == "softmuon":
         from third_party.softsign.softmuon import SingleDeviceSoftMuonWithAuxAdam
         if args.fp8_optim:

@@ -56,10 +56,12 @@ def final_metric(path: Path, target: int) -> dict:
     return {**result, 'val_loss': loss}
 
 
-def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1') -> None:
+def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1', *, scheduler: str = 'wsd', smoke_steps_override: int | None = None) -> None:
     group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
     if opt == 'soft_lion_muon':
         group = f'soft_lion_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
+    if scheduler == 'cos_warmup_zero':
+        group = f'cosine_four_optimizers_{size}M_{phase}_{CAMPAIGN_DATE}'
     name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_{TRAIN_WORLD}gpu'
     if MODE == '257m_aux_lr':
         name += '_emb3e-1_head3e-3'
@@ -108,7 +110,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             '--muon_beta2', '0.95', '--muon_ns_steps', '5', '--muon2-ns-steps', '5',
             '--beta1', '0.9', '--beta2', '0.95', '--eps', '1e-8', '--grad-clip', '1',
             '--batch-size', str(32 // TRAIN_WORLD), '--acc-steps', str(4 * TRAIN_WORLD), '--eval-batch-size', '32',
-            '--iterations', str(target), '--scheduler', 'wsd', '--warmup-steps', '0' if decay_resume else '2000',
+            '--iterations', str(target), '--scheduler', scheduler, '--warmup-steps', '0' if decay_resume else '2000',
             '--wsd-fract-decay', '1.0' if decay_resume else '0.1', '--wsd-final-lr-scale', '0', '--decay-type', 'cosine',
             '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0',
             '--results-base-folder', str(ROOT), '--metrics-jsonl', str(metrics),
@@ -121,6 +123,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
         args += ['--softmuon-aux-lr', '0.001', '--eps', '1e-10',
                  '--softmuon-sign-fraction', '0.9', '--softmuon-eps', '1e-4',
                  '--softmuon-newton-iters', '10']
+    if opt in ('lion_muon', 'muon_reference'):
+        args += ['--reference-aux-lr', '0.001', '--muon_ns_steps', '6']
     if opt == 'soft_lion_muon':
         args += ['--soft-lion-muon-aux-lr', '0.001', '--soft-lion-muon-period', '5',
                  '--soft-lion-muon-beta1', '0.95', '--soft-lion-muon-beta2', '0.99',
@@ -132,6 +136,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     if opt == 'slim_normuon_lion':
         args += ['--slim-lion-period', os.environ['SLIM_LION_PERIOD'],
                  '--slim-lion-lr-ratio', '0.01', '--slim-lion-momentum', '0.99']
+    if smoke_steps_override is not None:
+        smoke_steps = smoke_steps_override
     if smoke:
         args += ['--early-stop-iteration', str(smoke_steps), '--eval-interval', str(smoke_steps), '--eval-batches', '1', '--log-interval', '1', '--no-local-save']
     else:
@@ -159,7 +165,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                 last_disk_check = 0.0
                 try:
                     while process.poll() is None:
-                        if opt in ('softmuon', 'soft_lion_muon') and time.monotonic() - last_disk_check >= 30:
+                        if time.monotonic() - last_disk_check >= 30:
                             from optim.disk_guard import DiskSpaceEmergency, available
                             last_disk_check = time.monotonic()
                             paths = [Path(p) for p in json.loads(env['CLOUD_DISK_GUARD_PATHS'])]
@@ -230,7 +236,7 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
             result.update(second_moment_source='post_ns_hidden_raw_grad_auxiliary',
                           compression_map='layer_map_llama_paper.json', second_moment_normalization=True,
                           compression_rule='Q_K_dim1_V_O_up_gate_down_dim0_embedding_head_dim1_norm_full')
-        if MODE == 'matched' and opt not in ('softmuon', 'soft_lion_muon'):
+        if MODE == 'matched' and opt not in ('softmuon', 'soft_lion_muon', 'lion_muon', 'muon_reference'):
             result.update(update_rms=0.2, row_normalization=opt == 'normuon_matched',
                           ns_kernel='official_quintic_3.4445_-4.7750_2.0315',
                           auxiliary_lr=0.001, auxiliary_weight_decay=0.0,
@@ -267,6 +273,16 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           second_moment_clock='slim_steps_only', slim_update_rms=0.2,
                           update_rms=None, first_slim_step=int(os.environ['SLIM_LION_PERIOD']),
                           fineweb_replay_world_size=2 if TRAIN_WORLD == 1 else 1)
+        if scheduler == 'cos_warmup_zero':
+            result.update(scheduler=scheduler, warmup_steps=2000, final_lr_scale=0.0,
+                          auxiliary_lr=0.001, auxiliary_weight_decay=float(weight_decay),
+                          physical_world_size=TRAIN_WORLD, global_batch_size=128,
+                          seed=0, data_seed=1337, code_revision=os.environ['CODE_REVISION'])
+            if opt in ('lion_muon', 'muon_reference'):
+                result.update(ns_steps=6, reference_source='third_party/lion_muon',
+                              update_scale='0.2_sqrt_max_shape' if opt == 'lion_muon' else 'original_shape_factor',
+                              nesterov=opt == 'muon_reference',
+                              period=5 if opt == 'lion_muon' else 1)
         atomic_json(done, result)
         print('RUN_VERIFIED=' + json.dumps(result, sort_keys=True), flush=True)
     wait_json(done)
