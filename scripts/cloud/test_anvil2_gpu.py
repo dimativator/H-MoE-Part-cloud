@@ -24,7 +24,8 @@ torch.manual_seed(19)
 params = [torch.nn.Parameter(torch.randn(shape, device='cuda'))
           for shape in ((128, 384), (384, 128), (64, 64), (128,))]
 groups = [dict(params=params[:3]), dict(params=params[3:], is_proj_params=False)]
-optimizer = Anvil2(groups, total_steps=6, lr=float(os.environ['LR']))
+normalize = os.environ.get('ANVIL2_NO_NORMALIZATION') != '1'
+optimizer = Anvil2(groups, total_steps=6, lr=float(os.environ['LR']), normalize=normalize)
 for step in range(6):
     for p in params:
         p.grad = torch.randn_like(p)
@@ -32,6 +33,8 @@ for step in range(6):
             dist.all_reduce(p.grad)
             p.grad.div_(world)
     optimizer.step()
+    if not normalize and any('lane_energy' in optimizer.state[p] for p in params[:3]):
+        raise RuntimeError('Normalization ablation unexpectedly allocated lane energy')
     if step == 2:
         optimizer.load_state_dict(deepcopy(optimizer.state_dict()))
     for p in params:
@@ -47,6 +50,6 @@ for step in range(6):
                 if value.dtype != torch.float32 or not value.isfinite().all():
                     raise RuntimeError('Invalid ANVIL II CUDA state')
 torch.cuda.synchronize()
-print(f'ANVIL2_GPU_TEST_OK rank={rank} world={world} engage_step=3 completed_steps=6', flush=True)
+print(f'ANVIL2_GPU_TEST_OK rank={rank} world={world} normalize={normalize} engage_step=3 completed_steps=6', flush=True)
 if world > 1:
     dist.destroy_process_group()

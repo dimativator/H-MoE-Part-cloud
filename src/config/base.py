@@ -191,6 +191,8 @@ def parse_args(base_parser, args, namespace):
         help="Fraction of total optimizer steps completed before blending slow momentum.")
     parser.add_argument("--anvil2-momentum-warmup-steps", default=240, type=int)
     parser.add_argument("--anvil2-momentum-cooldown-steps", default=50, type=int)
+    parser.add_argument("--anvil2-no-normalization", action="store_true",
+        help="Use the two momentum streams and spectral projection without lane-energy normalization.")
     parser.add_argument("--model-parameter-dtype", default="float32", choices=["float32", "bfloat16"])
 
     # Weight averaging

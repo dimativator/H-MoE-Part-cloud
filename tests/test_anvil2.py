@@ -13,6 +13,53 @@ from optim.anvil2 import ANVIL_MAPS, Anvil2, anvil_cascade, build_anvil2
 
 
 class Anvil2Test(TestCase):
+    def test_no_normalization_matches_two_momentum_spectral_reference(self):
+        torch.manual_seed(23)
+        for shape in ((7, 3), (3, 7), (4, 4)):
+            p = torch.nn.Parameter(torch.randn(shape))
+            opt = Anvil2([p], total_steps=8, normalize=False, lr=0.03,
+                         weight_decay=0.1, momentum_warmup_steps=0,
+                         momentum_cooldown_steps=0)
+            fast, slow = torch.zeros_like(p), torch.zeros_like(p)
+            for t in range(8):
+                grad = torch.randn_like(p)
+                p.grad = grad.clone()
+                old = p.detach().clone()
+                beta = 0.85 if t >= 4 else 0.93
+                fast = beta * fast + (1 - beta) * grad
+                slow = 0.98 * slow + 0.02 * grad
+                blended = 0.4385 * fast + 0.5615 * slow if t >= 4 else fast
+                update = anvil_cascade(0.07 * grad + 0.93 * blended)
+                eta = 0.03 * math.sqrt(max(1, shape[0] / shape[1]))
+                expected = old - eta * update - eta * 0.1 * 0.03 * old * (old * slow >= 0)
+                opt.step()
+                torch.testing.assert_close(p, expected)
+                self.assertEqual(set(opt.state[p]), {'fast_momentum', 'slow_momentum'})
+                torch.testing.assert_close(p.grad, grad, rtol=0, atol=0)
+
+    def test_no_normalization_cli_resume_and_state_mismatch(self):
+        args = parse_args(ArgumentParser(), ['--experiment-name', 'test', '--opt', 'anvil2',
+                          '--iterations', '8', '--anvil2-no-normalization'], None)
+        p = torch.nn.Parameter(torch.randn(3, 5))
+        opt = build_anvil2([dict(params=[p])], args, {'projection.weight': p})
+        self.assertFalse(opt.control['normalize'])
+        p.grad = torch.randn_like(p)
+        opt.step()
+        q = torch.nn.Parameter(p.detach().clone())
+        restored = build_anvil2([dict(params=[q])], args, {'projection.weight': q})
+        restored.load_state_dict(deepcopy(opt.state_dict()))
+        for _ in range(7):
+            p.grad = torch.randn_like(p)
+            q.grad = p.grad.clone()
+            opt.step()
+            restored.step()
+            torch.testing.assert_close(p, q, rtol=0, atol=0)
+        with self.assertRaises(ValueError):
+            Anvil2([q], total_steps=8).load_state_dict(opt.state_dict())
+        old = Anvil2([q], total_steps=8).state_dict()
+        del old['anvil2_control']['config']['normalize']
+        Anvil2([q], total_steps=8).load_state_dict(old)
+
     def test_cascade_against_scalar_spectral_maps(self):
         torch.manual_seed(41)
         for shape in ((9, 4), (4, 9), (5, 5)):

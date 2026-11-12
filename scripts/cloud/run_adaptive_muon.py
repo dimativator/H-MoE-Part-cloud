@@ -57,12 +57,14 @@ def final_metric(path: Path, target: int) -> dict:
 
 
 def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | None = None, weight_decay: str = '1e-1') -> None:
+    no_normalization = opt == 'anvil2' and os.environ.get('ANVIL2_NO_NORMALIZATION') == '1'
+    label = 'anvil2_no_norm' if no_normalization else opt
     group = f'adaptive_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
     if opt == 'soft_lion_muon':
         group = f'soft_lion_muon_{size}M_{phase}_{CAMPAIGN_DATE}'
     if opt == 'anvil2':
-        group = f'anvil2_{size}M_{phase}_{CAMPAIGN_DATE}'
-    name = f'{opt}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_{TRAIN_WORLD}gpu'
+        group = f'{label}_{size}M_{phase}_{CAMPAIGN_DATE}'
+    name = f'{label}_{size}m_bf16_lr{lr}_wd{weight_decay}_{phase}_{TRAIN_WORLD}gpu'
     if MODE == '257m_aux_lr':
         name += '_emb3e-1_head3e-3'
     if RECOVERY:
@@ -123,6 +125,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
     if opt == 'anvil2':
         args += ['--anvil2-engage-fraction', '0.5', '--anvil2-momentum-warmup-steps', '240',
                  '--anvil2-momentum-cooldown-steps', '50', '--model-parameter-dtype', 'float32']
+        if no_normalization:
+            args += ['--anvil2-no-normalization']
     if opt == 'softmuon':
         args += ['--softmuon-aux-lr', '0.001', '--eps', '1e-10',
                  '--softmuon-sign-fraction', '0.9', '--softmuon-eps', '1e-4',
@@ -257,7 +261,8 @@ def train(opt: str, lr: str, size: int, phase: str, target: int, resume: Path | 
                           accumulation_per_gpu=4, seed=0, data_seed=1337,
                           wandb_mode=env['WANDB_MODE'])
         if opt == 'anvil2':
-            result.update(algorithm='ANVIL_II', auxiliary_lr=float(lr),
+            result.update(algorithm='ANVIL_II_NO_NORM' if no_normalization else 'ANVIL_II',
+                          matrix_normalization=not no_normalization, auxiliary_lr=float(lr),
                           auxiliary_weight_decay=float(weight_decay),
                           adamw_betas=[0.9, 0.95], adamw_eps=1e-8,
                           auxiliary_update_every=1, cautious_weight_decay=True,

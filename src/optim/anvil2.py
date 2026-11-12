@@ -6,6 +6,7 @@ active --opt muon path: shared LR, betas, epsilon, cadence, and decay coefficien
 with a sign gate added to decay. Matrix decay retains the
 reference's extra LR factor. States are replicated FP32 tensors (DDP or one
 device), without the reference trainer's weight mantissa or averaging buffers.
+The optional normalization ablation keeps only the fast and slow matrix streams.
 """
 
 import math
@@ -46,9 +47,12 @@ class Anvil2(torch.optim.Optimizer):
         weight_decay: float = 0.1, betas: tuple[float, float] = (0.9, 0.95),
         eps: float = 1e-8, engage_fraction: float = 0.5,
         momentum_warmup_steps: int = 240, momentum_cooldown_steps: int = 50,
+        normalize: bool = True,
     ):
         if not isinstance(total_steps, int) or total_steps < 1:
             raise ValueError('ANVIL II requires a positive integer total_steps')
+        if not isinstance(normalize, bool):
+            raise ValueError('ANVIL II normalize must be boolean')
         if not math.isfinite(engage_fraction) or not 0 <= engage_fraction <= 1:
             raise ValueError('ANVIL II engage_fraction must be in [0, 1]')
         if any(not isinstance(n, int) or n < 0
@@ -71,7 +75,8 @@ class Anvil2(torch.optim.Optimizer):
         self.control = dict(total_steps=total_steps,
                             engage_step=math.ceil(engage_fraction * total_steps),
                             momentum_warmup_steps=momentum_warmup_steps,
-                            momentum_cooldown_steps=momentum_cooldown_steps)
+                            momentum_cooldown_steps=momentum_cooldown_steps,
+                            normalize=normalize)
         self.completed_steps = 0
 
     def _momentum(self) -> float:
@@ -89,14 +94,17 @@ class Anvil2(torch.optim.Optimizer):
         if not state:
             m, n = grad.shape
             state.update(fast_momentum=torch.zeros_like(grad),
-                         slow_momentum=torch.zeros_like(grad),
-                         lane_energy=torch.zeros((m, 1) if m >= n else (1, n),
-                                                 dtype=torch.float32, device=grad.device))
+                         slow_momentum=torch.zeros_like(grad))
+            if self.control['normalize']:
+                state['lane_energy'] = torch.zeros((m, 1) if m >= n else (1, n),
+                                                  dtype=torch.float32, device=grad.device)
         state['fast_momentum'].lerp_(grad, 1 - (0.85 if engaged else mu))
         state['slow_momentum'].lerp_(grad, 0.02)
         alpha = 0.4385 if engaged else 1.0
         momentum = alpha * state['fast_momentum'] + (1 - alpha) * state['slow_momentum']
         x = anvil_cascade((1 - mu) * grad + mu * momentum)
+        if not self.control['normalize']:
+            return x
         axis = 1 if grad.size(0) >= grad.size(1) else 0
         state['lane_energy'].lerp_(x.square().mean(dim=axis, keepdim=True), 0.1)
         y = x * state['lane_energy'].clamp_min(1e-10).rsqrt()
@@ -163,7 +171,9 @@ class Anvil2(torch.optim.Optimizer):
     def load_state_dict(self, state_dict: dict) -> None:
         state_dict = dict(state_dict)
         control = state_dict.pop('anvil2_control')
-        if control['config'] != self.control:
+        config = {**control['config']}
+        config.setdefault('normalize', True)  # Older ANVIL II states always normalized.
+        if config != self.control:
             raise ValueError('ANVIL II schedule differs from saved state')
         completed = control['completed_steps']
         if not isinstance(completed, int) or not 0 <= completed <= self.control['total_steps']:
@@ -198,4 +208,5 @@ def build_anvil2(param_groups: list[dict], args, named_parameters: dict[str, Ten
                   betas=(args.beta1, args.beta2), eps=1e-8,
                   engage_fraction=args.anvil2_engage_fraction,
                   momentum_warmup_steps=args.anvil2_momentum_warmup_steps,
-                  momentum_cooldown_steps=args.anvil2_momentum_cooldown_steps)
+                  momentum_cooldown_steps=args.anvil2_momentum_cooldown_steps,
+                  normalize=not getattr(args, 'anvil2_no_normalization', False))
