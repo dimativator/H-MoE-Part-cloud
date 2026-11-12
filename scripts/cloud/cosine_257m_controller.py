@@ -120,6 +120,11 @@ def submit(label: str, revision: str, *, opt: str | None = None, lr: str | None 
     return record
 
 
+def decode_log_json(payload: str) -> dict:
+    # MPI can insert a new stream prefix every 4 KiB, even inside scalars.
+    return json.loads(re.sub(r'\[\d+,\d+\]<(?:stdout|stderr)>:', '', payload))
+
+
 def observe_inspection(label: str) -> dict:
     receipt = json.loads((GATEWAY / (label + '.json')).read_text())
     raw = command(['mlsub', 'status', receipt['job_id']])
@@ -147,7 +152,7 @@ def observe_inspection(label: str) -> dict:
         for marker in (*multiple, *single):
             if marker + '=' not in line:
                 continue
-            value = json.loads(line.split(marker + '=', 1)[1])
+            value = decode_log_json(line.split(marker + '=', 1)[1])
             if marker in multiple:
                 data[multiple[marker]].append(value)
             else:
