@@ -42,8 +42,14 @@ for path in sorted(root.glob('**/metrics.jsonl')):
         elif row.get('event') == 'train':
             train_tail.append(row)
             train_tail = train_tail[-12:]
-    print('CURVE=' + json.dumps(dict(path=str(path),
-          validation=list(validation.values()), train_tail=train_tail)), flush=True)
+    # The log service drops oversized entries once a curve exceeds its limit.
+    # Keep every entry below the MPI framing size and verify counts downstream.
+    for row in validation.values():
+        print('CURVE_VALIDATION=' + json.dumps(dict(path=str(path), record=row)), flush=True)
+    for row in train_tail:
+        print('CURVE_TRAIN=' + json.dumps(dict(path=str(path), record=row)), flush=True)
+    print('CURVE_COMPLETE=' + json.dumps(dict(path=str(path),
+          validation_points=len(validation), train_points=len(train_tail))), flush=True)
 # Report paths only, never delete or traverse checkpoint symlinks.
 checkpoints = [str(p) for p in root.glob('**/*.pt') if p.is_file() and not p.is_symlink()]
 print('CHECKPOINT_AUDIT=' + json.dumps(dict(paths=checkpoints)), flush=True)
