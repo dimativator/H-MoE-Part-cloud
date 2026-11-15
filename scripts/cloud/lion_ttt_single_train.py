@@ -30,7 +30,7 @@ def build_readers(args, *, rank: int, world_size: int) -> dict:
         if meta[key] != expected:
             raise RuntimeError('Unexpected source data identity: ' + key)
     proof=json.loads((Path('/workspace-SR006.nfs3/dimativator/lionmuon-time-target-500m-20261115/single_gpu_timing/data_proof.json')).read_text())
-    if proof['code_revision']!=os.environ['CODE_REVISION']:raise RuntimeError('Source integrity proof revision mismatch')
+    if proof['code_revision']!=os.environ.get('DATA_PROOF_REVISION',os.environ['CODE_REVISION']):raise RuntimeError('Source integrity proof revision mismatch')
     sources, hashes = [], []
     for source in meta['ranks']:
         segment = source['segments'][0]

@@ -371,6 +371,8 @@ def train(
     }
     from .disk_guard import from_environment
     disk_guard = from_environment()
+    from .ttt_phase_profile import from_environment as phase_from_environment
+    phase_profile = phase_from_environment(opt, cfg)
     inter_ckpt_steps = set(cfg.inter_ckpts)
     model.train()
 
@@ -574,6 +576,8 @@ def train(
             distributed_backend.barrier()
             ttt_block_peak = 0
             ttt_block_start = time.perf_counter()
+        if phase_profile is not None:
+            phase_profile.begin_step(curr_iter)
         # Train model
         t_start = time.perf_counter_ns()
         if "cuda" in cfg.device:
@@ -606,7 +610,9 @@ def train(
             if _time_bench:
                 torch.cuda.synchronize()
                 _tb0 = time.perf_counter_ns()
+            if phase_profile is not None: phase_profile.start('data')
             x, y = get_batch(train_reader, device=cfg.device)
+            if phase_profile is not None: phase_profile.stop('data')
             if _time_bench:
                 torch.cuda.synchronize()
                 _tb1 = time.perf_counter_ns()
@@ -616,6 +622,7 @@ def train(
                 if distributed_backend.is_master_process():
                     memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
                     _mem_before_step_fwd.append(memory_usage)
+            if phase_profile is not None: phase_profile.start('forward')
             with type_ctx:
                 with distributed_backend.get_context_for_microstep_forward(
                     model=model,
@@ -623,6 +630,7 @@ def train(
                     gradient_accumulation_steps=cfg.acc_steps,
                 ):
                     outputs = model(x, targets=y)
+            if phase_profile is not None: phase_profile.stop('forward')
 
             if _time_bench:
                 torch.cuda.synchronize()
@@ -635,9 +643,11 @@ def train(
                     memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
                     _mem_after_step_fwd.append(memory_usage)
 
+            if phase_profile is not None: phase_profile.start('backward')
             loss = outputs["loss"] / cfg.acc_steps
             with type_ctx:
                 loss.backward()
+            if phase_profile is not None: phase_profile.stop('backward')
 
             if _time_bench:
                 torch.cuda.synchronize()
@@ -659,8 +669,10 @@ def train(
             if _use_fp8 and microstep_idx == 0:
                 FP8Manager.is_first_microbatch = False
 
+        if phase_profile is not None: phase_profile.start('clipping')
         if cfg.grad_clip != 0.0:
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip).item()
+        if phase_profile is not None: phase_profile.stop('clipping')
         if cfg.opt == "SFAdamW":
             opt.train()
         
@@ -674,7 +686,9 @@ def train(
         if _time_bench:
             torch.cuda.synchronize()
             _tb4 = time.perf_counter_ns()
+        if phase_profile is not None: phase_profile.start('optimizer')
         opt.step()
+        if phase_profile is not None: phase_profile.stop('optimizer')
         if debug_dtypes and curr_iter == 1:
             print_gradient_dtypes(model, distributed_backend)
             print_optimizer_dtypes(opt, distributed_backend)
@@ -683,6 +697,8 @@ def train(
         if _time_bench:
             torch.cuda.synchronize()
             _tb5 = time.perf_counter_ns()
+
+        if phase_profile is not None: phase_profile.start('post')
         if scheduler is not None:
             scheduler.step()
         opt.zero_grad(set_to_none=True)
@@ -692,6 +708,9 @@ def train(
             )
         if cfg.exponential_moving_average:
             ema.step(not_compiled_model, distributed_backend.is_master_process())
+        if phase_profile is not None:
+            phase_profile.stop('post')
+            phase_profile.end_step()
         dt = (time.perf_counter_ns() - t_start) / 1e9
 
         if _time_bench:
@@ -830,6 +849,7 @@ def train(
             _prof.step()
 
     _torch_profiler.__exit__(None, None, None)
+    if phase_profile is not None: phase_profile.finish()
     return stats
 
 
