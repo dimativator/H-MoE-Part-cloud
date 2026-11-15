@@ -421,6 +421,8 @@ def train(
         _t_bwd  = []
         _t_opt  = []
 
+    ttt_benchmark = os.environ.get("LION_TTT_BENCHMARK") == "1"
+    ttt_block_start = None
     while curr_iter <= cfg.iterations:
         checkpoint_due = exp_dir is not None and curr_iter > 0 and (
             curr_iter in inter_ckpt_steps
@@ -566,6 +568,11 @@ def train(
                 memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
                 _mem_before_batch.append(memory_usage)
 
+        # Measure complete periods across all workers after compilation warmup.
+        if ttt_benchmark and curr_iter >= 40 and (curr_iter - 40) % 20 == 0:
+            torch.cuda.synchronize()
+            distributed_backend.barrier()
+            ttt_block_start = time.perf_counter()
         # Train model
         t_start = time.perf_counter_ns()
         if "cuda" in cfg.device:
@@ -693,6 +700,14 @@ def train(
             _t_opt.append((_tb5 - _tb4) / 1e6)
 
         curr_iter += 1
+        if ttt_benchmark and curr_iter > 40 and (curr_iter - 40) % 20 == 0:
+            torch.cuda.synchronize()
+            duration = torch.tensor(time.perf_counter() - ttt_block_start, device=cfg.device, dtype=torch.float64)
+            torch.distributed.all_reduce(duration, op=torch.distributed.ReduceOp.MAX)
+            if distributed_backend.is_master_process():
+                _log_local_metric(cfg, {"event": "ttt_benchmark", "iter": curr_iter,
+                    "steps": 20, "seconds": duration.item(), "seconds_per_step": duration.item() / 20,
+                    "optimizer": cfg.opt, "world_size": ws, "warmup_steps": 40})
         if distributed_backend.is_master_process():
             pbar.update(1)
 
