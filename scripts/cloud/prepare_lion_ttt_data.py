@@ -32,9 +32,13 @@ CHUNK_BLOCKS = 8192
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
+    last_guard = time.monotonic()
     with path.open('rb') as stream:
         while chunk := stream.read(16 * 1024 * 1024):
             digest.update(chunk)
+            if time.monotonic() - last_guard >= 30:
+                guard()
+                last_guard = time.monotonic()
     return digest.hexdigest()
 
 
@@ -196,12 +200,16 @@ def prepare_rank(rank: int, target: int) -> None:
                     stream_state=stream.state_dict(), train_revision=TRAIN_REVISION,
                     source_state_sha256=sha256_file(SOURCE / f'train_rank{rank}.third.state.json')))
                 common.emit('TAIL_PROGRESS', dict(rank=rank, blocks_written=written, target_blocks=blocks))
+        final_state = stream.state_dict()
+        if final_state['emitted_block_count'] != target * BLOCKS_PER_STEP_PER_SOURCE:
+            raise RuntimeError('Final stream position does not match the measured target')
     finally:
         stream.close()
     if part.stat().st_size != blocks * BLOCK_BYTES:
         raise RuntimeError('Tail size mismatch')
     value = dict(rank=rank, file=final.name, blocks=blocks, bytes=blocks * BLOCK_BYTES,
-        sha256=digest.hexdigest(), train_revision=TRAIN_REVISION)
+        sha256=digest.hexdigest(), train_revision=TRAIN_REVISION,
+        emitted_block_count=final_state['emitted_block_count'])
     if sha256_file(part) != value['sha256']:
         raise RuntimeError('Persisted tail hash mismatch')
     part.replace(final)
