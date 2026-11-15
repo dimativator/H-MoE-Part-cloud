@@ -113,7 +113,7 @@ def run(name: str, optimizer: str, target: int, decay: int, benchmark: bool) -> 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
             connection.connect(('8.8.8.8', 80)); address = connection.getsockname()[0]
         temporary = ready.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(master_addr=os.environ.get('MASTER_ADDR', address), master_port=29500)))
+        temporary.write_text(json.dumps(dict(master_addr=os.environ.get('MASTER_ADDR', address), master_port=int(os.environ.get('LION_TTT_MASTER_PORT','29500')))))
         temporary.replace(ready)
     started = time.monotonic()
     while not ready.exists():
