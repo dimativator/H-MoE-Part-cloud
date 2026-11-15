@@ -20,8 +20,9 @@ def build_readers(args, *, rank: int, world_size: int) -> dict:
     import torch
     from data import fineweb_packed as packed
     from data.fineweb import FineWebValReader
-    if rank != 0 or world_size != 1 or args.batch_size * args.acc_steps != 128:
-        raise ValueError('Single GPU and effective batch128 required')
+    expected_batch=int(os.environ.get('LION_TTT_EFFECTIVE_BATCH','128'))
+    if rank != 0 or world_size != 1 or args.batch_size * args.acc_steps != expected_batch:
+        raise ValueError('Single GPU and configured effective batch required')
     root = Path(args.datasets_dir)
     meta = json.loads((root / 'packed_metadata.json').read_text())
     for key, expected in dict(manifest_fingerprint=packed.EXPECTED_MANIFEST_FINGERPRINT,
@@ -30,7 +31,7 @@ def build_readers(args, *, rank: int, world_size: int) -> dict:
         if meta[key] != expected:
             raise RuntimeError('Unexpected source data identity: ' + key)
     proof=json.loads((Path('/workspace-SR006.nfs3/dimativator/lionmuon-time-target-500m-20261115/single_gpu_timing/data_proof.json')).read_text())
-    if proof['code_revision']!=os.environ['CODE_REVISION']:raise RuntimeError('Source integrity proof revision mismatch')
+    if proof['code_revision']!=os.environ.get('DATA_PROOF_REVISION',os.environ['CODE_REVISION']):raise RuntimeError('Source integrity proof revision mismatch')
     sources, hashes = [], []
     for source in meta['ranks']:
         segment = source['segments'][0]
@@ -65,7 +66,7 @@ def build_readers(args, *, rank: int, world_size: int) -> dict:
         raise RuntimeError('Validation hash mismatch')
     blocks = torch.from_numpy(np.fromfile(path,dtype='<u2').astype(np.int64).reshape(-1,1025))
     print('VERIFIED_TIMING_DATA=' + json.dumps(dict(prefix_sha256=hashes, microbatch=args.batch_size,
-        accumulation=args.acc_steps, global_batch=128, source_order='rank0[16],rank1[16] four times per optimizer step')),flush=True)
+        accumulation=args.acc_steps, global_batch=expected_batch, source_order='rank0[16],rank1[16] four times per optimizer step')),flush=True)
     return dict(train=Reader(),val=FineWebValReader(blocks,args.eval_batch_size,1024))
 
 
