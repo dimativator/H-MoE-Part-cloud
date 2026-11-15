@@ -37,12 +37,12 @@ def policy() -> None:
         raise RuntimeError('NFS3 bootstrap logs required; NFS2 must not be used')
 
 
-def submit(revision: str, stage: str, trial: str | None=None) -> dict:
+def submit(revision: str, stage: str, trial: str | None=None, label_override: str | None=None) -> dict:
     policy()
     advertised=command(['git','ls-remote',REPO,'refs/heads/'+BRANCH],30)
     if advertised['returncode'] or not advertised['stdout'].startswith(revision+'\t'):
         raise RuntimeError('Requested revision does not match published branch')
-    label=trial if trial else stage
+    label=label_override or trial or stage
     if stage=='inspect': label += '_' + time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())
     receipt=GATEWAY/(label+'.json')
     if receipt.exists():
@@ -116,13 +116,13 @@ def snapshot() -> dict:
         if record['job_id']:
             try: record['status']=json.loads(command(['mlsub','status',record['job_id']],30)['stdout'])
             except (ValueError,OSError,subprocess.TimeoutExpired) as exc: record['scheduler_error']=type(exc).__name__
-        record['wandb_url']='https://wandb-radfan.ru/andrey/fp8-pretrain/runs/slimadam-tt-'+trial+'-20261106'
+        record['wandb_url']='https://wandb-radfan.ru/andrey/fp8-pretrain/runs/lion-ttt-500m-'+trial+'-20261115'
         return record
     with ThreadPoolExecutor(max_workers=8) as pool: records=list(pool.map(collect,TRIALS))
     try:
         key=netrc.netrc().authenticators('wandb-radfan.ru')[2]
         token=base64.b64encode(('api:'+key).encode()).decode()
-        fields=['r'+str(i)+':run(name:"slimadam-tt-'+t+'-20261106") { state config summaryMetrics }' for i,t in enumerate(TRIALS)]
+        fields=['r'+str(i)+':run(name:"lion-ttt-500m-'+t+'-20261115") { state config summaryMetrics }' for i,t in enumerate(TRIALS)]
         query='query { project(name:"fp8-pretrain",entityName:"andrey") { '+' '.join(fields)+' } }'
         request=urllib.request.Request('https://wandb-radfan.ru/graphql',data=json.dumps(dict(query=query)).encode(),
             headers={'Content-Type':'application/json','Authorization':'Basic '+token})
@@ -148,7 +148,18 @@ def main() -> None:
     GATEWAY.mkdir(exist_ok=True)
     with (GATEWAY/'controller.lock').open('w') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        if args.action=='preflight': value=submit(args.revision,'preflight')
+        if args.action=='preflight':
+            pending=GATEWAY/'preflight.json'
+            if pending.exists():
+                previous=json.loads(pending.read_text())
+                if not previous.get('job_id'):
+                    raise RuntimeError('Reconcile pending preflight before another submission')
+                state=json.loads(command(['mlsub','status',previous['job_id']])['stdout']).get('status')
+                if state not in ('completed','failed','cancelled','canceled','killed'):
+                    print(json.dumps(previous),flush=True); return
+            label='preflight_'+time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())
+            value=submit(args.revision,'preflight',label_override=label)
+            atomic(GATEWAY/'preflight.json',value)
         elif args.action=='verify': value=verify(args.revision)
         elif args.action=='benchmark': value=submit(args.revision,'benchmark')
         elif args.action=='inspect': value=submit(args.revision,'inspect')

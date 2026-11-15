@@ -32,6 +32,8 @@ def space() -> dict:
                   code_revision=os.environ['CODE_REVISION'], ready=all(v > 5_100_000_000 for v in values.values()))
     emit('SPACE_SNAPSHOT', record)
     if not record['ready']:
+        emit('КРИТИЧЕСКИ МАЛО МЕСТА НА CLOUD.RU: ОСТАНАВЛИВАЮ ЭКСПЕРИМЕНТ',
+             {p: v for p, v in values.items() if v <= 5_100_000_000})
         raise RuntimeError('Storage reserve unavailable; stop tracked child')
     return record
 
@@ -41,7 +43,7 @@ def setup() -> dict:
     if revision != os.environ['CODE_REVISION'] or os.environ.get('VERIFIED_BOOTSTRAP_LOGS_DIR') != LOGS:
         raise RuntimeError('Source or bootstrap-log policy mismatch')
     space()
-    if not Path('/workspace-SR006.nfs3').is_mount():
+    if not Path('/workspace-SR006.nfs3').resolve().is_mount():
         raise RuntimeError('NFS3 mount missing')
     for path in ('/workspace-SR006.nfs2', '/home/jovyan/shares/SR006.nfs2'):
         try:
@@ -179,7 +181,7 @@ def plan() -> dict:
         target = math.floor(baseline * muon / (1.05 * lion))
         if target <= baseline:
             raise RuntimeError('Measured speedup does not permit extending stable phase')
-        targets[name] = dict(baseline_steps=baseline, target_steps=target, decay_steps=int(0.1 * baseline),
+        targets[name] = dict(baseline_steps=baseline, target_steps=target, decay_steps={'1xc': 7546, '2xc': 15091}[name],
             extra_stable_steps=target - baseline, consumed_tokens=target * 131072,
             muon_seconds=baseline * muon, lion_seconds=target * lion,
             predicted_speedup=baseline * muon / (target * lion))
@@ -193,6 +195,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(128 + signum))
     metadata = setup(); stage = os.environ['CAMPAIGN_STAGE']
     if stage == 'preflight':
+        emit('DATA_INVENTORY', dict(files=[dict(name=p.name, bytes=p.stat().st_size) for p in DATA.iterdir() if p.is_file()], metadata=metadata))
         import torch
         from third_party.lion_muon.lion_muon import LionMuon
         from third_party.lion_muon.muon import Muon
@@ -225,7 +228,10 @@ def main() -> None:
         for optimizer in ('muon_reference', 'lion_muon'):
             run('bench_' + optimizer, optimizer, 75457, 7545, True)
         if RANK == 0:
-            value = plan(); (ROOT / 'timing_plan.json').write_text(json.dumps(value, indent=2)); emit('TIMING_PLAN', value)
+            value = plan()
+            value['packed_data_iterations'] = metadata['iterations']
+            value['data_extension_required'] = any(metadata['iterations'] < t['target_steps'] for t in value['targets'].values())
+            (ROOT / 'timing_plan.json').write_text(json.dumps(value, indent=2)); emit('TIMING_PLAN', value)
         return
     trial = os.environ['TRIAL']
     value = json.loads((ROOT / 'timing_plan.json').read_text())
