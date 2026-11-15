@@ -66,7 +66,7 @@ def build_readers(args, *, rank: int, world_size: int) -> dict:
         raise RuntimeError('Validation hash mismatch')
     blocks = torch.from_numpy(np.fromfile(path,dtype='<u2').astype(np.int64).reshape(-1,1025))
     print('VERIFIED_TIMING_DATA=' + json.dumps(dict(prefix_sha256=hashes, microbatch=args.batch_size,
-        accumulation=args.acc_steps, global_batch=expected_batch, source_order='rank0[16],rank1[16] four times per optimizer step')),flush=True)
+        accumulation=args.acc_steps, global_batch=expected_batch, source_order='rank0[16],rank1[16] source groups', source_groups_per_optimizer_step=expected_batch//32)),flush=True)
     return dict(train=Reader(),val=FineWebValReader(blocks,args.eval_batch_size,1024))
 
 
