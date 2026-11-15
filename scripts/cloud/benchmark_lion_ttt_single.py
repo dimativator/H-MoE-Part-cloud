@@ -105,7 +105,13 @@ def main() -> None:
                 segment=source['segments'][0];path=common.DATA/segment['file'];stat=path.stat()
                 previous=next((p for p in prior.get('sources',[]) if p['rank']==source['rank']),{})
                 if not (previous.get('sha256')==segment['sha256'] and previous.get('mtime_ns')==stat.st_mtime_ns and previous.get('bytes')==stat.st_size):
-                    if packed._sha256_file(path)!=segment['sha256']:raise RuntimeError('Source segment hash mismatch')
+                    digest=hashlib.sha256();last_guard=time.monotonic()
+                    with path.open('rb') as source_stream:
+                        while chunk:=source_stream.read(16*1024*1024):
+                            digest.update(chunk)
+                            if time.monotonic()-last_guard>=30:
+                                common.space();last_guard=time.monotonic()
+                    if digest.hexdigest()!=segment['sha256']:raise RuntimeError('Source segment hash mismatch')
                 with path.open('rb') as stream:prefix=stream.read(15360*1025*2)
                 if len(prefix)!=15360*1025*2:raise RuntimeError('Timing prefix too short')
                 proofs.append(dict(rank=source['rank'],path=str(path),bytes=stat.st_size,mtime_ns=stat.st_mtime_ns,
