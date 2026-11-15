@@ -572,6 +572,7 @@ def train(
         if ttt_benchmark and curr_iter >= 40 and (curr_iter - 40) % 20 == 0:
             torch.cuda.synchronize()
             distributed_backend.barrier()
+            ttt_block_peak = 0
             ttt_block_start = time.perf_counter()
         # Train model
         t_start = time.perf_counter_ns()
@@ -700,14 +701,19 @@ def train(
             _t_opt.append((_tb5 - _tb4) / 1e6)
 
         curr_iter += 1
+        if ttt_benchmark and curr_iter > 40:
+            ttt_block_peak = max(ttt_block_peak, torch.cuda.max_memory_allocated())
         if ttt_benchmark and curr_iter > 40 and (curr_iter - 40) % 20 == 0:
             torch.cuda.synchronize()
             duration = torch.tensor(time.perf_counter() - ttt_block_start, device=cfg.device, dtype=torch.float64)
-            torch.distributed.all_reduce(duration, op=torch.distributed.ReduceOp.MAX)
+            if torch.distributed.is_initialized():
+                torch.distributed.all_reduce(duration, op=torch.distributed.ReduceOp.MAX)
             if distributed_backend.is_master_process():
                 _log_local_metric(cfg, {"event": "ttt_benchmark", "iter": curr_iter,
                     "steps": 20, "seconds": duration.item(), "seconds_per_step": duration.item() / 20,
-                    "optimizer": cfg.opt, "world_size": ws, "warmup_steps": 40})
+                    "optimizer": cfg.opt, "world_size": ws, "warmup_steps": 40,
+                    "microbatch": cfg.batch_size, "accumulation": cfg.acc_steps,
+                    "peak_allocated_bytes": ttt_block_peak})
         if distributed_backend.is_master_process():
             pbar.update(1)
 

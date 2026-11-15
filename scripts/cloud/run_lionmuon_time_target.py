@@ -12,7 +12,7 @@ import time
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 ROOT = Path('/workspace-SR006.nfs3/dimativator/lionmuon-time-target-500m-20261115')
-DATA = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
+DATA = Path(os.environ.get('DATASETS_DIR', '/workspace-SR006.nfs3/dimativator/fineweb-h200-packed'))
 LOGS = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
 RANK = int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 BASELINES = {'1xc': 75457, '2xc': 150914}
@@ -234,7 +234,7 @@ def main() -> None:
             (ROOT / 'timing_plan.json').write_text(json.dumps(value, indent=2)); emit('TIMING_PLAN', value)
         return
     trial = os.environ['TRIAL']
-    value = json.loads((ROOT / 'timing_plan.json').read_text())
+    value = json.loads(Path(os.environ.get('LION_TTT_PLAN_PATH', str(ROOT / 'timing_plan.json'))).read_text())
     if value['code_revision'] != os.environ['CODE_REVISION']:
         raise RuntimeError('Timing source revision mismatch')
     target = value['targets'][trial]
