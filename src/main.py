@@ -136,6 +136,13 @@ def define_wandb_metrics(downstream_evaluator=None, lm_evaluator=None):
 def main(args):
     distributed_backend = distributed.make_backend_from_args(args)
     args = distributed_backend.get_adjusted_args_for_process(args)
+    if os.environ.get("EXPECTED_GLOBAL_BATCH"):
+        actual_batch = args.batch_size * args.acc_steps * distributed_backend.get_world_size()
+        if actual_batch != int(os.environ["EXPECTED_GLOBAL_BATCH"]):
+            raise RuntimeError(f"Global batch mismatch: {actual_batch}")
+        print(f"VERIFIED_GLOBAL_BATCH={actual_batch} microbatch={args.batch_size} "
+              f"accumulation={args.acc_steps}", flush=True)
+
     args.world_size = distributed_backend.get_world_size()
 
     if args.full_eval_at is None:

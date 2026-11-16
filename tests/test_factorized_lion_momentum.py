@@ -50,6 +50,27 @@ class FactorizedMomentumTest(unittest.TestCase):
             self.assertTrue(torch.isfinite(weight).all())
             self.assertIn("moment2", opt.state[bias])
 
+    def test_launcher_matches_global_batch_after_ddp_adjustment(self):
+        import importlib.util
+        import sys
+        from pathlib import Path
+        from types import SimpleNamespace
+        root = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(root / "src"))
+        from distributed.ddp import DataParallelDistributedBackend
+        spec = importlib.util.spec_from_file_location("campaign", root / "scripts/cloud/run_factorized_lionmuon.py")
+        campaign = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(campaign)
+        command = campaign.arguments("test")
+        args = SimpleNamespace(batch_size=int(command[command.index("--batch-size")+1]),
+            acc_steps=int(command[command.index("--acc-steps")+1]), device="cuda", seed=0, data_seed=1337)
+        backend = object.__new__(DataParallelDistributedBackend)
+        backend.local_rank = 0
+        backend.get_world_size = lambda: 2
+        args = backend.get_adjusted_args_for_process(args)
+        self.assertEqual((args.batch_size, args.acc_steps), (16, 4))
+        self.assertEqual(args.batch_size * args.acc_steps * 2, 128)
+
     def test_all_campaign_ranks(self):
         g = torch.randn(272, 256) * 1e-4
         for rank in (32, 64, 128, 256):

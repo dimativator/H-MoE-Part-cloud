@@ -11,7 +11,7 @@ import sys
 import time
 
 REPO = Path(__file__).resolve().parents[2]
-ROOT = Path('/workspace-SR006.nfs3/dimativator/lionmuon-factorized-257m-20261116')
+ROOT = Path('/workspace-SR006.nfs3/dimativator/lionmuon-factorized-257m-20261116/batch128')
 DATA = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
 LOGS = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
 NFS2 = '/workspace-SR006.nfs2'
@@ -69,7 +69,7 @@ def arguments(name: str) -> list[str]:
         '--dropout', '0', '--opt', 'lion_muon', '--lion-momentum-rank', str(FACTOR),
         '--lion-momentum-damping', '1e-8', '--lr', '1e-3', '--reference-aux-lr', '1e-3',
         '--weight-decay', '0.1', '--beta1', '0.9', '--beta2', '0.99', '--eps', '1e-7',
-        '--grad-clip', '1', '--batch-size', '16', '--acc-steps', '4', '--eval-batch-size', '32',
+        '--grad-clip', '1', '--batch-size', '16', '--acc-steps', '8', '--eval-batch-size', '32',
         '--iterations', '39250', '--scheduler', 'wsd', '--warmup-steps', '3925',
         '--wsd-fract-decay', '0.1', '--wsd-final-lr-scale', '0', '--decay-type', 'cosine',
         '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0', '--no-local-save',
@@ -156,9 +156,9 @@ def main() -> None:
                 raise RuntimeError('Rendezvous missing')
             time.sleep(1)
         rendezvous = json.loads(ready.read_text())
-        env.update(RANK=str(RANK), WORLD_SIZE='2', LOCAL_RANK=os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'),
+        env.update(EXPECTED_GLOBAL_BATCH='128', RANK=str(RANK), WORLD_SIZE='2', LOCAL_RANK=os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'),
             MASTER_ADDR=rendezvous['master_addr'], MASTER_PORT=str(rendezvous['master_port']),
-            WANDB_RUN_ID='factor-lion-257m-' + name + '-20261116', WANDB_RESUME='never')
+            WANDB_RUN_ID='factor-lion-257m-b128-' + name + '-20261116', WANDB_RESUME='never')
         command = arguments(name)
     else:
         command = [sys.executable, __file__, '--check-data']
@@ -166,7 +166,7 @@ def main() -> None:
     if RANK == 0:
         import wandb
         run = wandb.init(entity='andrey', project='fp8-pretrain',
-            id='factor-lion-257m-' + name + '-monitor-20261116',
+            id='factor-lion-257m-b128-' + name + '-monitor-20261116',
             name='Factorized LionMuon ' + name + ' worker telemetry',
             group='LionMuon_factorized_257M_20261116', job_type='monitor',
             dir=str(ROOT / 'wandb'), resume='never')
@@ -194,7 +194,8 @@ def main() -> None:
                 raise RuntimeError('Child failed with exit code ' + str(process.returncode))
         if STAGE == 'train' and RANK == 0:
             finals = [r for r in records(output / 'metrics.jsonl') if 'final-val/loss' in r]
-            if not finals or finals[-1]['iter'] != 39250 or not math.isfinite(finals[-1]['final-val/loss']):
+            if (not finals or finals[-1]['iter'] != 39250 or finals[-1]['consumed_tokens'] != 5144576000
+                or not math.isfinite(finals[-1]['final-val/loss'])):
                 raise RuntimeError('Expected finite final validation absent')
         if list(output.rglob('*.pt')) or list(output.rglob('*.pth')):
             raise RuntimeError('Unexpected checkpoint artifact')
