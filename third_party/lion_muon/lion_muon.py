@@ -22,6 +22,7 @@ from .muon import zeropower_via_newtonschulz5
 from .norm_diagnostics import NormDiagnostics
 from .schedule import cos_inf_schedule, cosine_wsd_decay_schedule, wsd_schedule
 from .utils import estimate_stable_rank
+from .factorized_momentum import initialize_factors, update_factors
 
 
 class LionMuon(torch.optim.Optimizer):
@@ -59,7 +60,13 @@ class LionMuon(torch.optim.Optimizer):
         adamw_wd=0.1,
         norm_diag_path=None,
         norm_diag_every_k=50,
+        momentum_rank=0,
+        momentum_damping=1e-8,
     ):
+        if momentum_rank < 0 or momentum_damping <= 0:
+            raise ValueError("Invalid momentum rank or damping")
+        if momentum_rank and srank_alpha:
+            raise ValueError("Factorized campaign uses a fixed Muon schedule")
         if lion_lr is None:
             lion_lr = lr * 0.01  # default: 1% of muon lr
 
@@ -72,6 +79,8 @@ class LionMuon(torch.optim.Optimizer):
             muon_every_k=muon_every_k,
             weight_decay=weight_decay,
             srank_alpha=srank_alpha,
+            momentum_rank=momentum_rank,
+            momentum_damping=momentum_damping,
             adamw_lr=adamw_lr,
             adamw_lr_ratio=adamw_lr / lr if lr > 0 else 1.0,
             adamw_betas=adamw_betas,
@@ -161,7 +170,7 @@ class LionMuon(torch.optim.Optimizer):
                 lr = muon_lr if is_muon_global else lion_lr
 
             total_params = sum(p.numel() for p in params)
-            updates_flat = torch.zeros(total_params, device="cuda", dtype=torch.bfloat16)
+            updates_flat = torch.zeros(total_params, device=params[0].device if params else "cpu", dtype=torch.bfloat16)
             if adaptive:
                 param_lrs = []
             curr_idx = 0
@@ -175,10 +184,17 @@ class LionMuon(torch.optim.Optimizer):
                         g = g.view(g.size(0), -1)
 
                     state = self.state[p]
-                    if "exp_avg" not in state:
-                        state["exp_avg"] = torch.zeros_like(g)
-
-                    m = state["exp_avg"]
+                    factor_rank = group["momentum_rank"]
+                    if factor_rank:
+                        if "momentum_B" not in state:
+                            state["momentum_B"], state["momentum_A"] = initialize_factors(
+                                g, factor_rank, seed=1729 + i
+                            )
+                        m = state["momentum_B"] @ state["momentum_A"]
+                    else:
+                        if "exp_avg" not in state:
+                            state["exp_avg"] = torch.zeros_like(g)
+                        m = state["exp_avg"]
 
                     # Lion interpolation: direction to update
                     update = m * beta1 + g * (1 - beta1)
@@ -217,7 +233,12 @@ class LionMuon(torch.optim.Optimizer):
                         ))
 
                     # Update momentum with beta2 (Lion rule, after computing direction)
-                    m.mul_(beta2).add_(g, alpha=1 - beta2)
+                    if factor_rank:
+                        del m
+                        update_factors(state["momentum_B"], state["momentum_A"],
+                                       g, beta2, group["momentum_damping"])
+                    else:
+                        m.mul_(beta2).add_(g, alpha=1 - beta2)
 
                 if adaptive:
                     param_lrs.append(muon_lr if did_muon else lion_lr)

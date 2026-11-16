@@ -487,7 +487,9 @@ def main(args):
                       adamw_wd=args.weight_decay)
         if args.opt == "lion_muon":
             opt = LionMuon(matrices, lion_lr=args.lr * 0.01, beta1=0.95,
-                           beta2=0.99, muon_every_k=5, **kwargs)
+                           beta2=0.99, muon_every_k=5,
+                           momentum_rank=args.lion_momentum_rank,
+                           momentum_damping=args.lion_momentum_damping, **kwargs)
         else:
             opt = Muon(matrices, momentum=0.95, nesterov=True, **kwargs)
         print(f"REFERENCE_CONFIG optimizer={args.opt} matrix_lr={args.lr} "
