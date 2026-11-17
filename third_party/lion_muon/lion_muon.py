@@ -119,6 +119,11 @@ class LionMuon(torch.optim.Optimizer):
         k = self.param_groups[0]["muon_every_k"]
         return k <= 1 or (self._step_count % k) == 0
 
+    def _muon_update(self, update, state, group):
+        update = zeropower_via_newtonschulz5(update, steps=group["ns_steps"])
+        update *= 0.2 * max(update.size(0), update.size(1)) ** 0.5
+        return update
+
     def get_cumulative_diagnostics(self):
         ratios = self._diag.get("srank_ratios", [])
         types = self._diag.get("update_types", [])
@@ -212,8 +217,7 @@ class LionMuon(torch.optim.Optimizer):
 
                     if did_muon:
                         # NS orthogonalization + Moonshot scaling
-                        update = zeropower_via_newtonschulz5(update, steps=group["ns_steps"])
-                        update *= 0.2 * max(update.size(0), update.size(1)) ** 0.5
+                        update = self._muon_update(update, state, group)
                     else:
                         # Lion: pure sign
                         update = update.sign()
