@@ -13,7 +13,11 @@ LABELS = {'original': 'Original LionMuon', 'rms': 'Exact RMS (α=0)',
 
 def points(run: dict, metric: str) -> list[tuple[int, float]]:
     values = {}
-    for row in [*run.get('history', []), run.get('summary', {})]:
+    rows = list(run.get('history', []))
+    summary = run.get('summary', {})
+    if metric == 'train/loss' or 'final-val/loss' in summary:
+        rows.append(summary)
+    for row in rows:
         loss = row.get('final-val/loss', row.get(metric)) if metric == 'val/loss' else row.get(metric)
         if loss is not None and row.get('iter') is not None:
             values[int(row['iter'])] = float(loss)
