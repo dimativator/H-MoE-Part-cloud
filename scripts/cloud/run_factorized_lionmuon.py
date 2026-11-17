@@ -11,7 +11,12 @@ import sys
 import time
 
 REPO = Path(__file__).resolve().parents[2]
-ROOT = Path('/workspace-SR006.nfs3/dimativator/lionmuon-factorized-257m-20261116/batch128')
+ROOT = Path(os.environ.get('FACTOR_RESULTS_ROOT', '/workspace-SR006.nfs3/dimativator/lionmuon-factorized-257m-20261116/batch128'))
+RUN_PREFIX = os.environ.get('FACTOR_RUN_PREFIX', 'factor-lion-257m-b128-')
+RUN_DATE = os.environ.get('FACTOR_RUN_DATE', '20261116')
+GROUP = os.environ.get('FACTOR_GROUP', 'LionMuon_factorized_257M_20261116')
+BETA1 = float(os.environ.get('LION_BETA1', '0.95'))
+BETA2 = float(os.environ.get('LION_BETA2', '0.99'))
 DATA = Path('/workspace-SR006.nfs3/dimativator/fineweb-h200-packed')
 LOGS = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
 NFS2 = '/workspace-SR006.nfs2'
@@ -67,6 +72,7 @@ def arguments(name: str) -> list[str]:
         '--model', 'llama', '--n-layer', '12', '--n-embd', '1024', '--n-head', '8',
         '--multiple-of', '256', '--dtype', 'bfloat16', '--model-parameter-dtype', 'float32',
         '--dropout', '0', '--opt', 'lion_muon', '--lion-momentum-rank', str(FACTOR),
+        '--lion-beta1', str(BETA1), '--lion-beta2', str(BETA2),
         '--lion-momentum-damping', '1e-8', '--lr', '1e-3', '--reference-aux-lr', '1e-3',
         '--weight-decay', '0.1', '--beta1', '0.9', '--beta2', '0.99', '--eps', '1e-7',
         '--grad-clip', '1', '--batch-size', '16', '--acc-steps', '8', '--eval-batch-size', '32',
@@ -75,7 +81,7 @@ def arguments(name: str) -> list[str]:
         '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0', '--no-local-save',
         '--results-base-folder', str(ROOT), '--metrics-jsonl', str(ROOT / name / 'metrics.jsonl'),
         '--eval-interval', '500', '--eval-batches', '32', '--log-interval', '50',
-        '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', 'LionMuon_factorized_257M_20261116',
+        '--wandb', '--wandb-project', 'fp8-pretrain', '--wandb-group', GROUP,
         '--wandb-tags', '257M', 'factorized_momentum', 'rank' + str(FACTOR), 'wd0.1', 'no_checkpoints']
 
 
@@ -124,7 +130,7 @@ def main() -> None:
     initial_space = space()
     for child in ('logs', 'rendezvous', 'wandb', 'evals_cache'):
         (ROOT / child).mkdir(parents=True, exist_ok=True)
-    name = 'preflight' if STAGE == 'preflight' else 'rank' + str(FACTOR)
+    name = 'preflight' if STAGE == 'preflight' else os.environ.get('FACTOR_TRIAL_NAME', 'rank' + str(FACTOR))
     output = ROOT / name
     output.mkdir(exist_ok=True)
     cache = Path('/tmp') / ('factor-lion-' + name + '-rank' + str(RANK))
@@ -158,7 +164,7 @@ def main() -> None:
         rendezvous = json.loads(ready.read_text())
         env.update(EXPECTED_GLOBAL_BATCH='128', RANK=str(RANK), WORLD_SIZE='2', LOCAL_RANK=os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'),
             MASTER_ADDR=rendezvous['master_addr'], MASTER_PORT=str(rendezvous['master_port']),
-            WANDB_RUN_ID='factor-lion-257m-b128-' + name + '-20261116', WANDB_RESUME='never')
+            WANDB_RUN_ID=RUN_PREFIX + name + '-' + RUN_DATE, WANDB_RESUME='never')
         command = arguments(name)
     else:
         command = [sys.executable, __file__, '--check-data']
@@ -166,14 +172,14 @@ def main() -> None:
     if RANK == 0:
         import wandb
         run = wandb.init(entity='andrey', project='fp8-pretrain',
-            id='factor-lion-257m-b128-' + name + '-monitor-20261116',
+            id=RUN_PREFIX + name + '-monitor-' + RUN_DATE,
             name='Factorized LionMuon ' + name + ' worker telemetry',
-            group='LionMuon_factorized_257M_20261116', job_type='monitor',
+            group=GROUP, job_type='monitor',
             dir=str(ROOT / 'wandb'), resume='never')
     log = ROOT / 'logs' / (name + '_rank' + str(RANK) + '.log')
     process = None
     try:
-        emit('RUN_CONFIG', dict(rank=RANK, factor_rank=FACTOR, command=command, checkpoints=False))
+        emit('RUN_CONFIG', dict(rank=RANK, factor_rank=FACTOR, beta1=BETA1, beta2=BETA2, gamma=1-math.sqrt(BETA2), command=command, checkpoints=False))
         with log.open('x') as stream:
             process = subprocess.Popen(command, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
             emit('CHILD_PROCESS', dict(rank=RANK, pid=process.pid, process_group=process.pid))

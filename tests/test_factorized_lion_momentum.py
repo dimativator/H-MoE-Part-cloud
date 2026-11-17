@@ -71,6 +71,22 @@ class FactorizedMomentumTest(unittest.TestCase):
         self.assertEqual((args.batch_size, args.acc_steps), (16, 4))
         self.assertEqual(args.batch_size * args.acc_steps * 2, 128)
 
+    def test_beta_sweep_launcher_configuration(self):
+        import importlib.util
+        import os
+        from pathlib import Path
+        from unittest.mock import patch
+        root = Path(__file__).resolve().parents[1]
+        for beta1, beta2 in ((0.9, 0.9), (0.9, 0.95), (0.9, 0.99), (0.95, 0.95), (0.95, 0.99)):
+            with patch.dict(os.environ, LION_BETA1=str(beta1), LION_BETA2=str(beta2), FACTOR_RANK="256"):
+                spec = importlib.util.spec_from_file_location("beta_campaign", root / "scripts/cloud/run_factorized_lionmuon.py")
+                campaign = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(campaign)
+                command = campaign.arguments("test")
+                for flag, expected in (("--lion-beta1", beta1), ("--lion-beta2", beta2),
+                                       ("--beta1", 0.9), ("--beta2", 0.99), ("--lion-momentum-rank", 256)):
+                    self.assertEqual(float(command[command.index(flag)+1]), expected)
+
     def test_all_campaign_ranks(self):
         g = torch.randn(272, 256) * 1e-4
         for rank in (32, 64, 128, 256):

@@ -179,6 +179,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--softmuon-newton-iters", default=10, type=int)
     parser.add_argument("--softmuon-aux-lr", default=None, type=float)
     parser.add_argument("--reference-aux-lr", default=0.001, type=float)
+    parser.add_argument("--lion-beta1", default=0.95, type=float)
+    parser.add_argument("--lion-beta2", default=0.99, type=float)
     parser.add_argument("--lion-momentum-rank", default=0, type=int)
     parser.add_argument("--lion-momentum-damping", default=1e-8, type=float)
     parser.add_argument("--soft-lion-muon-period", default=5, type=int)

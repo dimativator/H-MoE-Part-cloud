@@ -493,8 +493,10 @@ def main(args):
                       adamw_betas=(args.beta1, args.beta2), adamw_eps=args.eps,
                       adamw_wd=args.weight_decay)
         if args.opt == "lion_muon":
-            opt = LionMuon(matrices, lion_lr=args.lr * 0.01, beta1=0.95,
-                           beta2=0.99, muon_every_k=5,
+            if not (0 <= args.lion_beta1 < 1 and 0 <= args.lion_beta2 < 1):
+                raise ValueError("LionMuon betas must be in [0, 1)")
+            opt = LionMuon(matrices, lion_lr=args.lr * 0.01, beta1=args.lion_beta1,
+                           beta2=args.lion_beta2, muon_every_k=5,
                            momentum_rank=args.lion_momentum_rank,
                            momentum_damping=args.lion_momentum_damping, **kwargs)
         else:
