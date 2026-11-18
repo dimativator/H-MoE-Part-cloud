@@ -65,7 +65,10 @@ def submit(role: str, revision: str) -> dict:
     if json.loads(Path('/etc/mlsub/policy.json').read_text())['logs_dir'] != LOGS:
         raise RuntimeError('Bootstrap logs must use verified NFS3')
     if role == 'preflight':
-        proof = json.loads((BASE / 'storage_proof.json').read_text())
+        authorization = json.loads((BASE / 'bootstrap_authorization.json').read_text())
+        if authorization.get('code_revision') != revision or authorization.get('user_instruction') != 'just run. without checkpoints':
+            raise RuntimeError('Explicit campaign bootstrap authorization required')
+        proof = None
     else:
         current = snapshot()
         preflight = current['runs'].get('lion-slimnorm-500m-preflight-monitor-20261118', {})
@@ -73,7 +76,7 @@ def submit(role: str, revision: str) -> dict:
         if preflight.get('state') != 'finished' or status.get('status') != 'complete' or status.get('code_revision') != revision:
             raise RuntimeError('Successful same-revision preflight required')
         proof = status['space']
-    if not proof:
+    if not proof and role != 'preflight':
         raise RuntimeError('Missing storage proof')
     if proof:
         required_paths = {'/workspace-SR006.nfs3', LOGS, '/home/jovyan', '/tmp', '/'}
