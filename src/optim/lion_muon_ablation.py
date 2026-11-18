@@ -1,4 +1,6 @@
 """Independent normalization and probability ablations of dense LionMuon."""
+import json
+from pathlib import Path
 import random
 
 import torch
@@ -55,3 +57,65 @@ class LionMuonAblation(LionMuon):
                 "lion_ablation/muon_probability": self.last_probability,
                 "lion_ablation/muon_steps": self.muon_count,
                 "lion_ablation/muon_fraction": self.muon_count / max(self._step_count, 1)}
+
+
+SLIMNORM_TRIALS = ("neuron_no_rms", "neuron_rms_down", "neuron_no_rms_down",
+                   "slim_no_rms", "slim_rms_down", "slim_no_rms_down")
+
+
+class LionMuonSlimNorm(LionMuonAblation):
+    """Alpha=1 ablations of final RMS, probability, and SlimAdam variance axes.
+
+    Only hidden post-NS variance changes. Dense momentum and auxiliary AdamW
+    remain identical to LionMuonAblation. Variance is updated on Muon steps.
+    """
+
+    def __init__(self, muon_params, *, variant: str, named_parameters: dict,
+                 total_steps: int, **kwargs):
+        if variant not in SLIMNORM_TRIALS:
+            raise ValueError("Unknown SlimNorm trial")
+        super().__init__(muon_params, variant="neuron_full", total_steps=total_steps, **kwargs)
+        self.trial = variant
+        self.final_rms = variant in ("neuron_rms_down", "slim_rms_down")
+        self.probability_down = variant.endswith("_down")
+        self.slim_variance = variant.startswith("slim_")
+        layer_map = json.loads((Path(__file__).parent /
+            "memory_efficient/slim_adam/layer_map_llama_paper.json").read_text())
+        names = {id(p): name for name, p in named_parameters.items()}
+        manifest = []
+        for p in muon_params:
+            name = names.get(id(p))
+            kinds = [kind for kind, patterns in layer_map.items()
+                     if name is not None and any(name.endswith(pattern) for pattern in patterns)]
+            if len(kinds) != 1 or kinds[0] not in (
+                "attention_query", "attention_key", "attention_value", "attention_output",
+                "mlp_up", "mlp_gate", "mlp_down") or p.ndim != 2:
+                raise ValueError(f"Unmapped hidden variance: {name}, {kinds}")
+            axis = 1 if not self.slim_variance or kinds[0] in ("attention_query", "attention_key") else 0
+            self.state[p]["variance_axis"] = axis
+            shape = list(p.shape)
+            shape[axis] = 1
+            manifest.append(dict(name=name, axis=axis, variance_shape=shape))
+        print("LION_SLIMNORM_COVERAGE=" + json.dumps(manifest), flush=True)
+
+    def _is_muon_step(self):
+        if self.probability_down:
+            fraction = min(self._step_count / (self.total_steps - 1), 1.0)
+            self.last_probability = 0.35 - 0.30 * fraction
+            self.last_muon = self.probability_rng.random() < self.last_probability
+        else:
+            self.last_muon = LionMuon._is_muon_step(self)
+        self.muon_count += int(self.last_muon)
+        return self.last_muon
+
+    def _muon_update(self, update, state, group):
+        update = zeropower_via_newtonschulz5(update, steps=group["ns_steps"]).float()
+        statistic = update.square().mean(dim=state["variance_axis"], keepdim=True)
+        if "neuron_variance" not in state:
+            state["neuron_variance"] = torch.zeros_like(statistic)
+        variance = state["neuron_variance"]
+        variance.lerp_(statistic, 1 - self.neuron_beta)
+        update = update / (variance + 1e-8).sqrt()
+        if self.final_rms:
+            update = update * (0.2 / (update.square().mean().sqrt() + 1e-8))
+        return update

@@ -498,6 +498,10 @@ def main(args):
             if args.lion_ablation != "original":
                 from optim.lion_muon_ablation import LionMuonAblation
                 optimizer_class = LionMuonAblation
+                from optim.lion_muon_ablation import LionMuonSlimNorm, SLIMNORM_TRIALS
+                if args.lion_ablation in SLIMNORM_TRIALS:
+                    optimizer_class = LionMuonSlimNorm
+                    kwargs["named_parameters"] = param_name_mapping
                 kwargs.update(variant=args.lion_ablation, total_steps=args.iterations,
                               neuron_beta=args.lion_neuron_beta, probability_seed=args.lion_probability_seed)
             else:
