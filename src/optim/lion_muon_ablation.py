@@ -119,3 +119,29 @@ class LionMuonSlimNorm(LionMuonAblation):
         if self.final_rms:
             update = update * (0.2 / (update.square().mean().sqrt() + 1e-8))
         return update
+
+
+class LionMuonLRCompensation(LionMuonAblation):
+    """Probability compensation of branch LRs with original Muon scaling."""
+
+    def __init__(self, *args, compensation_gamma: float = 0.0, **kwargs):
+        if compensation_gamma not in (0.0, 0.5, 1.0):
+            raise ValueError("Expected gamma 0, 0.5, or 1")
+        if kwargs.get("variant") != "probability_down":
+            raise ValueError("LR compensation requires probability_down")
+        super().__init__(*args, **kwargs)
+        self.compensation_gamma = compensation_gamma
+
+    def _branch_lrs(self, group):
+        muon_lr, lion_lr = super()._branch_lrs(group)
+        p = self.last_probability
+        return (muon_lr * (0.2 / p) ** self.compensation_gamma,
+                lion_lr * (0.8 / (1 - p)) ** self.compensation_gamma)
+
+    def get_step_metrics(self) -> dict:
+        metrics = super().get_step_metrics()
+        muon_lr, lion_lr = self._branch_lrs(self.param_groups[0])
+        metrics.update({"lion_lrcomp/muon_lr": muon_lr,
+                        "lion_lrcomp/lion_lr": lion_lr,
+                        "lion_lrcomp/gamma": self.compensation_gamma})
+        return metrics

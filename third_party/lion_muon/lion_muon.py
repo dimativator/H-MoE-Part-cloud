@@ -143,6 +143,9 @@ class LionMuon(torch.optim.Optimizer):
             "srank_ratios": ratios,
         }
 
+    def _branch_lrs(self, group):
+        return group["lr"], group["lion_lr_ratio"] * group["lr"]
+
     def step(self):
         is_muon_global = self._is_muon_step()
         self._step_count += 1
@@ -169,8 +172,7 @@ class LionMuon(torch.optim.Optimizer):
             params = [p for p in group["params"] if self.state[p]["use_muon"]]
             beta1 = group["beta1"]
             beta2 = group["beta2"]
-            muon_lr = group["lr"]
-            lion_lr = group["lion_lr_ratio"] * group["lr"]  # scales with scheduler
+            muon_lr, lion_lr = self._branch_lrs(group)
             if not adaptive:
                 lr = muon_lr if is_muon_global else lion_lr
 

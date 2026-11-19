@@ -506,7 +506,13 @@ def main(args):
                               neuron_beta=args.lion_neuron_beta, probability_seed=args.lion_probability_seed)
             else:
                 optimizer_class = LionMuon
-            opt = optimizer_class(matrices, lion_lr=args.lr * 0.01, beta1=args.lion_beta1,
+            if args.lion_ablation == "probability_down":
+                from optim.lion_muon_ablation import LionMuonLRCompensation
+                optimizer_class = LionMuonLRCompensation
+                kwargs["compensation_gamma"] = args.lion_compensation_gamma
+            if args.lion_lr_ratio <= 0:
+                raise ValueError("Lion LR ratio must be positive")
+            opt = optimizer_class(matrices, lion_lr=args.lr * args.lion_lr_ratio, beta1=args.lion_beta1,
                            beta2=args.lion_beta2, muon_every_k=5,
                            momentum_rank=args.lion_momentum_rank,
                            momentum_damping=args.lion_momentum_damping, **kwargs)
