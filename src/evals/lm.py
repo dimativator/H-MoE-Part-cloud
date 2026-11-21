@@ -188,6 +188,9 @@ class AuxiliaryLMEvaluator:
 
         for dataset_name, reader in self._readers.items():
             reader.set_step(0)
+            from evals import endpoint_ci
+            collect_ci = endpoint_ci.enabled() and curr_iter == self.cfg.iterations
+            sequence_values = []
             total_loss = 0.0
             num_batches = reader.num_batches()
             if num_batches == 0:
@@ -206,9 +209,13 @@ class AuxiliaryLMEvaluator:
                     y = y.to(self.cfg.device)
 
                 with type_ctx:
-                    outputs = model(x, targets=y, get_logits=False)
+                    outputs = model(x, targets=y, get_logits=collect_ci)
+                if collect_ci:
+                    sequence_values.extend(endpoint_ci.sequence_losses(outputs["logits"], y))
                 total_loss += float(outputs["loss"].detach().cpu().item())
 
+            if collect_ci:
+                logs.update(endpoint_ci.interval(dataset_name, sequence_values))
             mean_loss = total_loss / num_batches
             perplexity = math.exp(mean_loss)
             logs[f"aux-lm/{dataset_name}/loss"] = mean_loss

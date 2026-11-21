@@ -227,6 +227,7 @@ def eval(
     max_num_batches=24,
     ctx=nullcontext(),
     cfg=None,
+    sequence_values=None,
 ):
     assert model.training == False
 
@@ -238,6 +239,9 @@ def eval(
             outputs = model(x, targets=y, get_logits=True)
         val_loss = outputs["loss"]
 
+        if sequence_values is not None and len(sequence_values) < 1024:
+            from evals.endpoint_ci import sequence_losses
+            sequence_values.extend(sequence_losses(outputs["logits"], y))
         loss_list_val.append(val_loss)
         acc_list.append((outputs["logits"].argmax(-1) == y).float().mean())
 

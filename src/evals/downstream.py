@@ -179,6 +179,10 @@ class DownstreamEvaluator:
 
                 metric.update(batch, outputs["logits"])
 
+            from evals import endpoint_ci
+            if endpoint_ci.enabled() and curr_iter == self.cfg.iterations:
+                metric_name, values = endpoint_ci.per_document_values(metric)
+                logs.update(endpoint_ci.interval(runtime["task_name"], values, binary=metric_name != "bpb_v2"))
             raw_metrics = metric.compute()
             raw_metrics = _select_latest_metrics(raw_metrics)
             if not isinstance(raw_metrics, dict):

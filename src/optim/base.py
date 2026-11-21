@@ -838,14 +838,18 @@ def eval_and_log(
     # to make sure we start from the beginning of the validation set,
     # i.e. repeat the same batches
     val_reader.set_step(0)
+    from evals import endpoint_ci
+    sequence_values = [] if endpoint_ci.enabled() and curr_iter == cfg.iterations else None
     val_acc, val_loss, val_perplexity = eval(
         model,
         val_reader,
         cfg.device,
         max_num_batches=max_num_batches,
         ctx=type_ctx,
-        cfg=cfg,
+        cfg=cfg, sequence_values=sequence_values,
     )
+    if sequence_values is not None:
+        wandb.log({"iter": curr_iter, **endpoint_ci.interval("validation", sequence_values[:1024])})
 
     print(
         f">Eval: Iter={curr_iter} "
