@@ -23,6 +23,8 @@ TRIALS = {
     'muon_bf16': ('muon', 'bf16', '1e-3', '1e-4', 75457, 4),
     'muon_fp8': ('muon', 'fp8', '1e-3', '1e-4', 77523, 4),
 }
+for optimizer in ("ademamix", "muon"):
+    TRIALS[f"{optimizer}_bf16_warm7000"] = TRIALS[f"{optimizer}_bf16"]
 
 
 def emit(marker: str, value: dict) -> None:
@@ -88,7 +90,7 @@ def arguments(trial: str, smoke: bool = False) -> list[str]:
         '--weight-decay', wd, '--beta1', '0.9', '--beta2', '0.999' if opt == 'ademamix' else '0.99',
         '--grad-clip', '0.5' if opt == 'ademamix' else '1.0',
         '--batch-size', str(32 // world), '--acc-steps', str(4 * world),
-        '--eval-batch-size', '32', '--iterations', str(target), '--scheduler', 'cos', '--warmup-steps', '7000' if opt == 'adamw' or precision == 'fp8' else '2000',
+        '--eval-batch-size', '32', '--iterations', str(target), '--scheduler', 'cos', '--warmup-steps', '7000' if trial not in ('ademamix_bf16', 'muon_bf16') else '2000',
         '--latest-ckpt-interval', '0', '--permanent-ckpt-interval', '0', '--no-local-save',
         '--results-base-folder', str(ROOT), '--metrics-jsonl', str(ROOT / name / 'metrics.jsonl')]
     if precision == 'fp8':
