@@ -17,6 +17,8 @@ LOGS = '/home/jovyan/shares/SR006.nfs3/mlsub-logs'
 RANK = int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 TRIALS = {
     'adamw_bf16': ('adamw', 'bf16', '1e-3', '1e-4', 75457, 4),
+    'ademamix_bf16_lr1em3': ('ademamix', 'bf16', '1e-3', '1e-4', 75457, 4),
+    'ademamix_fp8_lr1em4': ('ademamix', 'fp8', '1e-4', '1e-4', 78295, 4),
     'adamw_fp8': ('adamw', 'fp8', '1e-3', '1e-4', 78460, 4),
     'ademamix_bf16': ('ademamix', 'bf16', '1e-4', '1e-4', 75457, 4),
     'ademamix_fp8': ('ademamix', 'fp8', '1e-3', '1e-4', 78295, 4),
