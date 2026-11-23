@@ -179,7 +179,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--softmuon-newton-iters", default=10, type=int)
     parser.add_argument("--softmuon-aux-lr", default=None, type=float)
     parser.add_argument("--reference-aux-lr", default=0.001, type=float)
-    parser.add_argument("--lion-ablation", choices=("original", "rms", "neuron_half", "neuron_full", "probability_down", "neuron_no_rms", "neuron_rms_down", "neuron_no_rms_down", "slim_no_rms", "slim_rms_down", "slim_no_rms_down"), default="original")
+    parser.add_argument("--lion-ablation", choices=("original", "rms", "neuron_half", "neuron_full", "probability_down", "neuron_no_rms", "neuron_rms_down", "neuron_no_rms_down", "slim_no_rms", "slim_rms_down", "slim_no_rms_down", 'regular', 'constant_random', 'muon_ema', 'linear_zero', 'half_cosine', 'stagger_uniform', 'stagger_early', 'stagger_middle', 'stagger_late'), default="original")
     parser.add_argument("--lion-lr-ratio", default=0.01, type=float)
     parser.add_argument("--lion-compensation-gamma", default=0.0, type=float, choices=(0.0, 0.5, 1.0))
     parser.add_argument("--lion-neuron-beta", default=0.95, type=float)

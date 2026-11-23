@@ -143,6 +143,12 @@ class LionMuon(torch.optim.Optimizer):
             "srank_ratios": ratios,
         }
 
+    def _matrix_branch(self, param, global_branch):
+        return global_branch
+
+    def _direction_beta(self, group, muon):
+        return group["beta1"]
+
     def _branch_lrs(self, group):
         return group["lr"], group["lion_lr_ratio"] * group["lr"]
 
@@ -170,11 +176,8 @@ class LionMuon(torch.optim.Optimizer):
             ############################
 
             params = [p for p in group["params"] if self.state[p]["use_muon"]]
-            beta1 = group["beta1"]
             beta2 = group["beta2"]
             muon_lr, lion_lr = self._branch_lrs(group)
-            if not adaptive:
-                lr = muon_lr if is_muon_global else lion_lr
 
             total_params = sum(p.numel() for p in params)
             updates_flat = torch.zeros(total_params, device=params[0].device if params else "cpu", dtype=torch.bfloat16)
@@ -183,7 +186,7 @@ class LionMuon(torch.optim.Optimizer):
             curr_idx = 0
 
             for i, p in enumerate(params):
-                did_muon = False
+                did_muon = self._matrix_branch(p, is_muon_global) if not adaptive else False
                 if i % self.world_size == self.rank:
                     g = p.grad
                     assert g is not None
@@ -204,6 +207,7 @@ class LionMuon(torch.optim.Optimizer):
                         m = state["exp_avg"]
 
                     # Lion interpolation: direction to update
+                    beta1 = self._direction_beta(group, did_muon)
                     update = m * beta1 + g * (1 - beta1)
 
                     # Decide muon vs lion for this param
@@ -214,8 +218,6 @@ class LionMuon(torch.optim.Optimizer):
                         did_muon = srank_sq <= (srank_alpha * dmin)
                         self._diag["srank_ratios"].append(float(srank_ratio))
                         self._diag["update_types"].append("NS" if did_muon else "sign")
-                    else:
-                        did_muon = is_muon_global
 
                     if did_muon:
                         # NS orthogonalization + Moonshot scaling
@@ -261,7 +263,7 @@ class LionMuon(torch.optim.Optimizer):
                     .view_as(p.data)
                     .type_as(p.data)
                 )
-                plr = param_lrs[j] if adaptive else lr
+                plr = param_lrs[j] if adaptive else (muon_lr if self._matrix_branch(p, is_muon_global) else lion_lr)
                 if wd > 0:
                     p.data.mul_(1 - plr * wd)
                 p.data.add_(u, alpha=-plr)

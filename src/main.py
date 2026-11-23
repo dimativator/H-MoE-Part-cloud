@@ -499,6 +499,10 @@ def main(args):
                 from optim.lion_muon_ablation import LionMuonAblation
                 optimizer_class = LionMuonAblation
                 from optim.lion_muon_ablation import LionMuonSlimNorm, SLIMNORM_TRIALS
+                from optim.lion_muon_cadence import LionMuonCadence, TRIALS as CADENCE_TRIALS
+                if args.lion_ablation in CADENCE_TRIALS:
+                    optimizer_class = LionMuonCadence
+                    kwargs["named_parameters"] = param_name_mapping
                 if args.lion_ablation in SLIMNORM_TRIALS:
                     optimizer_class = LionMuonSlimNorm
                     kwargs["named_parameters"] = param_name_mapping
