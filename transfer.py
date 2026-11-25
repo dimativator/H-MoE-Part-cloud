@@ -60,7 +60,9 @@ def run():
         with tempfile.TemporaryDirectory(prefix=".validation-copy-",dir=dest.parent) as tmp:
             stage = Path(tmp) / "dataset"
             stage.mkdir()
-            url = base64.urlsafe_b64decode(os.environ["SOURCE_LINK"]).decode()
+            link_parts = sorted(k for k in os.environ if k.startswith("LINK_PART_"))
+            link = "".join(os.environ[k] for k in link_parts)
+            url = base64.urlsafe_b64decode(link + "=" * (-len(link) % 4)).decode()
             with urllib.request.urlopen(url, timeout=60) as source:
                 ciphertext = source.read(total + 1)
             if len(ciphertext) != total:
