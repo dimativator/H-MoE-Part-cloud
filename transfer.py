@@ -1,3 +1,5 @@
+import base64
+import subprocess
 import datetime
 import hashlib
 import json
@@ -58,22 +60,25 @@ def run():
         with tempfile.TemporaryDirectory(prefix=".validation-copy-",dir=dest.parent) as tmp:
             stage = Path(tmp) / "dataset"
             stage.mkdir()
-            for name,(size, _) in files.items():
+            url = base64.urlsafe_b64decode(os.environ["SOURCE_LINK"]).decode()
+            with urllib.request.urlopen(url, timeout=60) as source:
+                ciphertext = source.read(total + 1)
+            if len(ciphertext) != total:
+                raise RuntimeError("Source length mismatch")
+            plain = subprocess.run(["openssl", "enc", "-d", "-aes-256-ctr",
+                                    "-K", os.environ["SOURCE_KEY"], "-iv", os.environ["SOURCE_IV"]],
+                                   input=ciphertext, stdout=subprocess.PIPE, check=True).stdout
+            offset = 0
+            for name, (size, expected_hash) in files.items():
+                payload = plain[offset:offset+size]
+                if hashlib.sha256(payload).hexdigest() != expected_hash:
+                    raise RuntimeError("Source digest mismatch")
                 measure("before_file", size)
-                request = urllib.request.Request(os.environ["SOURCE_URL"] + "/" + name,
-                            headers={"Authorization":"Bearer " + os.environ["SOURCE_KEY"]})
-                with urllib.request.urlopen(request, timeout=45) as source, (stage / name).open("xb") as target:
-                    if int(source.headers.get("Content-Length",-1)) != size:
-                        raise RuntimeError("Source length mismatch")
-                    remaining = size
-                    while remaining:
-                        data = source.read(min(remaining, 1024*1024))
-                        if not data:
-                            raise EOFError(name)
-                        target.write(data)
-                        remaining -= len(data)
+                with (stage / name).open("xb") as target:
+                    target.write(payload)
                     target.flush()
                     os.fsync(target.fileno())
+                offset += size
             verify(stage)
             stage.rename(dest)
     verify(dest)
