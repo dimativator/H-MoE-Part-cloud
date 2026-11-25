@@ -433,7 +433,7 @@ def train(
             # FP32 parameters plus full momentum and compressed variance, with
             # room for serialization and both workers' RNG/data states.
             checkpoint_bytes = sum(p.numel() * 12 for p in model.parameters()) + 64_000_000 if checkpoint_due else 0
-            disk_guard.check(extra_bytes=checkpoint_bytes)
+            disk_guard.check(extra_bytes=checkpoint_bytes * (2 if os.environ.get("FINAL_VALIDATION_32768") == "1" else 1))
         # Save permanent checkpoint
         if curr_iter > 0 and cfg.permanent_ckpt_interval > 0 and exp_dir is not None:
             if curr_iter % cfg.permanent_ckpt_interval == 0:

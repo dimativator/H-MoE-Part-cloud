@@ -681,6 +681,10 @@ def main(args):
         debug_dtypes=args.debug_dtype,
     )
 
+    if os.environ.get("FINAL_VALIDATION_32768") == "1":
+        from evals.validation_size import evaluate
+        evaluate(distributed_backend.get_raw_model(model), exp_dir, args)
+
     # We don't need to save such complex structure as it's fields are already in args
     del args.qargs
     stats["args"] = vars(args)
