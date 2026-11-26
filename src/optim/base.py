@@ -859,14 +859,24 @@ def eval_and_log(
     # to make sure we start from the beginning of the validation set,
     # i.e. repeat the same batches
     val_reader.set_step(0)
-    val_acc, val_loss, val_perplexity = eval(
-        model,
-        val_reader,
-        cfg.device,
-        max_num_batches=max_num_batches,
-        ctx=type_ctx,
-        cfg=cfg,
-    )
+    extra_metrics = {}
+    large_validation = os.getenv("LIONMUON_VALCI") == "1"
+    if large_validation and (curr_iter == cfg.iterations or (curr_iter > 0 and curr_iter % 5000 == 0)):
+        from evals.lionmuon_valci import evaluate
+        val_acc, val_loss, val_perplexity, extra_metrics = evaluate(
+            model, val_reader, cfg, type_ctx, curr_iter == cfg.iterations)
+    else:
+        val_acc, val_loss, val_perplexity = eval(
+            model,
+            val_reader,
+            cfg.device,
+            max_num_batches=max_num_batches,
+            ctx=type_ctx,
+            cfg=cfg,
+        )
+
+        if large_validation:
+            extra_metrics["val1024/loss"] = val_loss
 
     print(
         f">Eval: Iter={curr_iter} "
@@ -881,6 +891,7 @@ def eval_and_log(
         cfg,
         {
             "event": "validation",
+            **extra_metrics,
             "iter": curr_iter,
             f"{metric_prefix}/loss": val_loss,
             f"{metric_prefix}/perplexity": val_perplexity,
@@ -911,7 +922,7 @@ def eval_and_log(
                 "consumed_tokens": curr_iter * distributed_backend.get_world_size() * cfg.acc_steps * cfg.batch_size * cfg.sequence_length,
             }
 
-        wandb.log(logs)
+        wandb.log({**logs, **extra_metrics})
         if cfg.eval_seq_prefix != "none" and (
             curr_iter % (cfg.eval_interval * 5) == 0 or curr_iter == cfg.iterations
         ):
